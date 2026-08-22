@@ -1,9 +1,12 @@
 package com.mrredhood.nexus.ui
 
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.AutoAwesome
+import androidx.compose.material.icons.rounded.Extension
 import androidx.compose.material.icons.rounded.Home
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.Settings
@@ -23,15 +26,16 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.res.stringResource
-import com.mrredhood.nexus.R
-import com.mrredhood.nexus.ui.components.OnboardingNotice
+import androidx.compose.ui.unit.dp
 import com.mrredhood.nexus.ui.components.NexusHome
+import com.mrredhood.nexus.ui.components.OnboardingNotice
+import com.mrredhood.nexus.ui.connectors.ConnectorsScreen
 import kotlinx.coroutines.launch
 
 private enum class Destination(val label: String) {
-    HOME("Home"), SEARCH("Search"), AUTOMATIONS("Automations"), SETTINGS("Settings")
+    HOME("Home"), SEARCH("Search"), AUTOMATIONS("Automations"), CONNECTORS("Connectors"), SETTINGS("Settings")
 }
 
 @Composable
@@ -44,7 +48,7 @@ fun NexusApp() {
     Scaffold(
         topBar = {
             CenterAlignedTopAppBar(
-                title = { Text(text = "Nexus", style = MaterialTheme.typography.titleLarge) }
+                title = { Text("Nexus", style = MaterialTheme.typography.titleLarge) }
             )
         },
         bottomBar = {
@@ -68,6 +72,12 @@ fun NexusApp() {
                     label = { Text("Automations") }
                 )
                 NavigationBarItem(
+                    selected = current == Destination.CONNECTORS,
+                    onClick = { current = Destination.CONNECTORS },
+                    icon = { Icon(Icons.Rounded.Extension, contentDescription = "Connectors") },
+                    label = { Text("Connectors") }
+                )
+                NavigationBarItem(
                     selected = current == Destination.SETTINGS,
                     onClick = { current = Destination.SETTINGS },
                     icon = { Icon(Icons.Rounded.Settings, contentDescription = "Settings") },
@@ -77,11 +87,12 @@ fun NexusApp() {
         },
         snackbarHost = { SnackbarHost(snackbarHostState) }
     ) { padding ->
-        Box(modifier = Modifier.fillMaxSize()) {
+        Box(modifier = Modifier.fillMaxSize().padding(padding)) {
             when (current) {
-                Destination.HOME -> NexusHome(padding)
+                Destination.HOME -> NexusHome(androidx.compose.foundation.layout.PaddingValues())
                 Destination.SEARCH -> PlaceholderPage("Universal search")
                 Destination.AUTOMATIONS -> PlaceholderPage("Automations")
+                Destination.CONNECTORS -> ConnectorsScreen()
                 Destination.SETTINGS -> PlaceholderPage("Settings")
             }
 
@@ -90,7 +101,7 @@ fun NexusApp() {
                     onDismiss = { noticeVisible = false },
                     onPrivacy = {
                         noticeVisible = false
-                        scope.launch { snackbarHostState.showSnackbar("Privacy policy will open from Settings") }
+                        scope.launch { snackbarHostState.showSnackbar("Privacy policy is available from Settings") }
                     }
                 )
             }
@@ -100,16 +111,17 @@ fun NexusApp() {
 
 @Composable
 private fun PlaceholderPage(title: String) {
-    androidx.compose.foundation.layout.Column(
+    Column(
         modifier = Modifier.fillMaxSize(),
         verticalArrangement = androidx.compose.foundation.layout.Arrangement.Center,
-        horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally
+        horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Icon(Icons.Rounded.AutoAwesome, contentDescription = null)
         Text(title, style = MaterialTheme.typography.headlineSmall)
         Text(
             "Foundation screen — capability is added behind this stable shell.",
-            style = MaterialTheme.typography.bodyMedium
+            style = MaterialTheme.typography.bodyMedium,
+            modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp)
         )
     }
 }
