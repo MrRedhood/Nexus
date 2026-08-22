@@ -5,7 +5,7 @@ plugins {
 
 android {
     namespace = "com.mrredhood.nexus"
-    compileSdk = 36
+    compileSdk = 37
 
     defaultConfig {
         applicationId = "com.mrredhood.nexus"
