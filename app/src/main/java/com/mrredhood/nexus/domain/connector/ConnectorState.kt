@@ -10,7 +10,6 @@ data class ConnectorState(
 )
 
 class ConnectorStateStore(initial: List<ConnectorManifest> = ConnectorCatalog.official) {
-    private val states = initial.associateBy { it.id }.toMutableMap()
     private val values = initial.associateBy { it.id }
         .mapValues { (_, manifest) -> ConnectorState(manifest) }
         .toMutableMap()
