@@ -5,7 +5,7 @@ plugins {
 
 android {
     namespace = "com.mrredhood.nexus"
-    compileSdk = 37
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "com.mrredhood.nexus"
@@ -13,7 +13,6 @@ android {
         targetSdk = 36
         versionCode = 1
         versionName = "0.1.0"
-        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables.useSupportLibrary = true
     }
 
