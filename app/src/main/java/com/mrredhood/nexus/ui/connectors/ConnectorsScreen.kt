@@ -20,11 +20,13 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
-import com.mrredhood.nexus.domain.connector.ConnectorCatalog
 import com.mrredhood.nexus.domain.connector.ConnectorStateStore
 import com.mrredhood.nexus.domain.connector.ConnectorStatus
 import com.mrredhood.nexus.domain.permission.PermissionScope
@@ -33,7 +35,11 @@ import com.mrredhood.nexus.ui.components.NexusCard
 @Composable
 fun ConnectorsScreen(modifier: Modifier = Modifier) {
     val store = remember { ConnectorStateStore() }
-    val states = store.all()
+    var states by remember { mutableStateOf(store.all()) }
+
+    fun refreshState() {
+        states = store.all()
+    }
 
     LazyColumn(
         modifier = modifier.fillMaxSize(),
@@ -54,9 +60,18 @@ fun ConnectorsScreen(modifier: Modifier = Modifier) {
                 status = state.status,
                 account = state.accountLabel,
                 permissions = state.manifest.permissions,
-                onConnect = { store.connect(state.manifest.id, "Account not configured") },
-                onDisconnect = { store.disconnect(state.manifest.id) },
-                onSync = { store.updateSync(state.manifest.id, System.currentTimeMillis()) }
+                onConnect = {
+                    store.connect(state.manifest.id, "Account not configured")
+                    refreshState()
+                },
+                onDisconnect = {
+                    store.disconnect(state.manifest.id)
+                    refreshState()
+                },
+                onSync = {
+                    store.updateSync(state.manifest.id, System.currentTimeMillis())
+                    refreshState()
+                }
             )
         }
     }
