@@ -12,6 +12,7 @@ import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material.icons.rounded.Sync
 import androidx.compose.material3.CenterAlignedTopAppBar
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
@@ -38,6 +39,7 @@ private enum class Destination(val label: String) {
     HOME("Home"), SEARCH("Search"), AUTOMATIONS("Automations"), CONNECTORS("Connectors"), SETTINGS("Settings")
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun NexusApp() {
     var noticeVisible by remember { mutableStateOf(true) }
