@@ -25,6 +25,14 @@ class WorkspaceViewModel(context: Context) : ViewModel() {
     val error: StateFlow<String?> = _error.asStateFlow()
     private val _openedFile = MutableStateFlow<WorkspaceFile?>(null)
     val openedFile: StateFlow<WorkspaceFile?> = _openedFile.asStateFlow()
+    private val _editorContent = MutableStateFlow<String?>(null)
+    val editorContent: StateFlow<String?> = _editorContent.asStateFlow()
+    private val _editorPath = MutableStateFlow<String?>(null)
+    val editorPath: StateFlow<String?> = _editorPath.asStateFlow()
+    private val _editorDirty = MutableStateFlow(false)
+    val editorDirty: StateFlow<Boolean> = _editorDirty.asStateFlow()
+    private val _saving = MutableStateFlow(false)
+    val saving: StateFlow<Boolean> = _saving.asStateFlow()
 
     fun open(workspace: Workspace) { _currentPath.value = ""; load(workspace, "") }
     fun enter(workspace: Workspace, relativePath: String) = load(workspace, relativePath)
@@ -34,15 +42,51 @@ class WorkspaceViewModel(context: Context) : ViewModel() {
     fun read(workspace: Workspace, relativePath: String) {
         viewModelScope.launch {
             runCatching { fileSystem.read(workspace, relativePath) }
-                .onSuccess { _openedFile.value = it }
+                .onSuccess { file ->
+                    _openedFile.value = file
+                    _editorPath.value = file.relativePath
+                    _editorContent.value = file.content
+                    _editorDirty.value = false
+                }
                 .onFailure { _error.value = it.message ?: "Unable to read file" }
         }
     }
 
-    fun clearOpenedFile() { _openedFile.value = null }
+    fun updateEditorContent(content: String) {
+        if (_editorContent.value == null) return
+        _editorContent.value = content
+        _editorDirty.value = true
+    }
+
+    fun saveEditor(workspace: Workspace) {
+        val path = _editorPath.value ?: return
+        val content = _editorContent.value ?: return
+        if (!_editorDirty.value) return
+        viewModelScope.launch {
+            _saving.value = true
+            _error.value = null
+            runCatching { fileSystem.write(workspace, path, content, mimeTypeFor(path)) }
+                .onSuccess { file ->
+                    _openedFile.value = file
+                    _editorContent.value = file.content
+                    _editorDirty.value = false
+                }
+                .onFailure { _error.value = it.message ?: "Unable to save file" }
+            _saving.value = false
+        }
+    }
+
+    fun clearEditor() {
+        _openedFile.value = null
+        _editorPath.value = null
+        _editorContent.value = null
+        _editorDirty.value = false
+    }
+
+    fun clearOpenedFile() = clearEditor()
     fun clearError() { _error.value = null }
 
-    fun createFile(workspace: Workspace, name: String) = mutateAndRefresh(workspace) { fileSystem.createFile(workspace, join(_currentPath.value, name)) }
+    fun createFile(workspace: Workspace, name: String) = mutateAndRefresh(workspace) { fileSystem.createFile(workspace, join(_currentPath.value, name), mimeTypeFor(name)) }
     fun createDirectory(workspace: Workspace, name: String) = mutateAndRefresh(workspace) { fileSystem.createDirectory(workspace, join(_currentPath.value, name)) }
     fun delete(workspace: Workspace, path: String) = mutateAndRefresh(workspace) { fileSystem.delete(workspace, path) }
     fun rename(workspace: Workspace, path: String, name: String) = mutateAndRefresh(workspace) { fileSystem.rename(workspace, path, name) }
@@ -65,6 +109,17 @@ class WorkspaceViewModel(context: Context) : ViewModel() {
                 .onFailure { _error.value = it.message ?: "Operation failed" }
                 .onSuccess { load(workspace, _currentPath.value) }
         }
+    }
+
+    private fun mimeTypeFor(path: String): String = when (path.substringAfterLast('.', "").lowercase()) {
+        "kt", "kts", "java", "groovy" -> "text/x-kotlin"
+        "js", "mjs", "cjs", "ts", "tsx", "jsx" -> "text/javascript"
+        "json" -> "application/json"
+        "xml" -> "application/xml"
+        "html", "htm" -> "text/html"
+        "css" -> "text/css"
+        "md", "markdown", "txt", "gradle", "properties", "yaml", "yml", "toml", "sh" -> "text/plain"
+        else -> "text/plain"
     }
 
     private fun join(parent: String, child: String): String {
