@@ -22,11 +22,16 @@ class WorkspaceViewModel(context: Context) : ViewModel() {
     private val fileSystem = WorkspaceFileSystem(context.applicationContext)
     private val searchService = WorkspaceSearch(fileSystem)
     private var searchJob: Job? = null
+    private var navigationJob: Job? = null
 
     private val _entries = MutableStateFlow<List<WorkspaceEntry>>(emptyList())
     val entries: StateFlow<List<WorkspaceEntry>> = _entries.asStateFlow()
     private val _currentPath = MutableStateFlow("")
     val currentPath: StateFlow<String> = _currentPath.asStateFlow()
+    private val _navigationStack = MutableStateFlow<List<String>>(emptyList())
+    val navigationStack: StateFlow<List<String>> = _navigationStack.asStateFlow()
+    private val _recentPaths = MutableStateFlow<List<String>>(emptyList())
+    val recentPaths: StateFlow<List<String>> = _recentPaths.asStateFlow()
     private val _loading = MutableStateFlow(false)
     val loading: StateFlow<Boolean> = _loading.asStateFlow()
     private val _error = MutableStateFlow<String?>(null)
@@ -48,10 +53,58 @@ class WorkspaceViewModel(context: Context) : ViewModel() {
     private val _searchQuery = MutableStateFlow("")
     val searchQuery: StateFlow<String> = _searchQuery.asStateFlow()
 
-    fun open(workspace: Workspace) { _currentPath.value = ""; load(workspace, "") }
-    fun enter(workspace: Workspace, relativePath: String) = load(workspace, relativePath)
-    fun up(workspace: Workspace) = load(workspace, _currentPath.value.substringBeforeLast('/', ""))
-    fun refresh(workspace: Workspace) = load(workspace, _currentPath.value)
+    fun open(workspace: Workspace) {
+        navigationJob?.cancel()
+        _currentPath.value = ""
+        _navigationStack.value = emptyList()
+        _recentPaths.value = emptyList()
+        load(workspace, "", recordNavigation = false)
+    }
+
+    fun enter(workspace: Workspace, relativePath: String) = navigateTo(workspace, relativePath)
+
+    fun navigateTo(workspace: Workspace, relativePath: String) {
+        val target = normalizePath(relativePath)
+        val current = _currentPath.value
+        if (target == current) {
+            refresh(workspace)
+            return
+        }
+        val stack = _navigationStack.value
+        val newStack = when {
+            target.isEmpty() -> emptyList()
+            stack.lastOrNull() == target -> stack.dropLast(1)
+            else -> (stack + current).filter { it.isNotEmpty() }.distinct()
+        }
+        load(workspace, target, recordNavigation = false, navigationStack = newStack)
+    }
+
+    fun back(workspace: Workspace): Boolean {
+        val stack = _navigationStack.value
+        if (stack.isNotEmpty()) {
+            val target = stack.last()
+            load(workspace, target, recordNavigation = false, navigationStack = stack.dropLast(1))
+            return true
+        }
+        val current = _currentPath.value
+        if (current.isNotEmpty()) {
+            val parent = current.substringBeforeLast('/', "")
+            load(workspace, parent, recordNavigation = false, navigationStack = emptyList())
+            return true
+        }
+        return false
+    }
+
+    fun up(workspace: Workspace): Boolean {
+        val current = _currentPath.value
+        if (current.isEmpty()) return false
+        val parent = current.substringBeforeLast('/', "")
+        val stack = _navigationStack.value.filter { it != parent && it != current }
+        load(workspace, parent, recordNavigation = false, navigationStack = stack)
+        return true
+    }
+
+    fun refresh(workspace: Workspace) = load(workspace, _currentPath.value, recordNavigation = false, navigationStack = _navigationStack.value)
 
     fun search(workspace: Workspace, options: WorkspaceSearchOptions) {
         searchJob?.cancel()
@@ -107,11 +160,18 @@ class WorkspaceViewModel(context: Context) : ViewModel() {
     fun copy(workspace: Workspace, source: String, destination: String) = mutateAndRefresh(workspace) { fileSystem.copy(workspace, source, destination) }
     fun move(workspace: Workspace, source: String, destination: String) = mutateAndRefresh(workspace) { fileSystem.move(workspace, source, destination) }
 
-    private fun load(workspace: Workspace, path: String) {
-        viewModelScope.launch {
+    private fun load(workspace: Workspace, path: String, recordNavigation: Boolean, navigationStack: List<String> = _navigationStack.value) {
+        val normalized = normalizePath(path)
+        navigationJob?.cancel()
+        navigationJob = viewModelScope.launch {
             _loading.value = true; _error.value = null
-            runCatching { fileSystem.list(workspace, path) }
-                .onSuccess { _currentPath.value = path; _entries.value = it }
+            runCatching { fileSystem.list(workspace, normalized) }
+                .onSuccess {
+                    _currentPath.value = normalized
+                    _navigationStack.value = navigationStack.filter { it != normalized }.takeLast(50)
+                    _recentPaths.value = (_recentPaths.value.filter { it != normalized } + normalized).takeLast(20)
+                    _entries.value = it
+                }
                 .onFailure { _error.value = it.message ?: "Unable to load workspace" }
             _loading.value = false
         }
@@ -122,8 +182,14 @@ class WorkspaceViewModel(context: Context) : ViewModel() {
             _error.value = null
             runCatching { operation() }
                 .onFailure { _error.value = it.message ?: "Operation failed" }
-                .onSuccess { load(workspace, _currentPath.value) }
+                .onSuccess { load(workspace, _currentPath.value, false, _navigationStack.value) }
         }
+    }
+
+    private fun normalizePath(path: String): String {
+        val clean = path.trim().replace('\\', '/')
+        require(!clean.startsWith('/') && clean.split('/').none { it == "." || it == ".." || it.contains('\u0000') }) { "Invalid workspace path" }
+        return clean.split('/').filter { it.isNotEmpty() }.joinToString("/")
     }
 
     private fun mimeTypeFor(path: String): String = when (path.substringAfterLast('.', "").lowercase()) {
