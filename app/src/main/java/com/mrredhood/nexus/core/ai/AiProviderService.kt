@@ -43,7 +43,7 @@ class AiProviderService(context: Context) {
             )
             val result = execute(request, false) { }
             if (result.success) ConnectionTestResult(true, "Connection successful with $provider / $model.")
-            else ConnectionTestResult(false, result.error ?: "Connection failed.")
+            else ConnectionTestResult(false, result.message.ifBlank { "Connection failed." })
         }.getOrElse { ConnectionTestResult(false, it.message ?: "Connection failed.") }
     }
 
