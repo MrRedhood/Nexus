@@ -22,6 +22,7 @@ import com.mrredhood.nexus.core.ai.NexusActionProtocol
 import com.mrredhood.nexus.core.ai.NexusActionReview
 import com.mrredhood.nexus.core.ai.NexusActionStatus
 import com.mrredhood.nexus.core.ai.NexusEditorActionBus
+import com.mrredhood.nexus.core.ai.WorkspaceContextService
 import com.mrredhood.nexus.core.settings.NexusSettingsRuntime
 import com.mrredhood.nexus.core.workspace.Workspace
 import com.mrredhood.nexus.core.workspace.WorkspaceFileSystem
@@ -37,6 +38,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     private val provider = AiProviderService(application.applicationContext)
     private val contextBuilder = ChatContextBuilder()
     private val contextService = AIContextService()
+    private val workspaceContextService = WorkspaceContextService(WorkspaceFileSystem(application.applicationContext))
     private val actionExecutor = NexusActionExecutor(WorkspaceFileSystem(application.applicationContext))
     private var workspaceId: String? = null
     private var workspace: Workspace? = null
@@ -137,7 +139,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             val settings = NexusSettingsRuntime.current()
             val history = _messages.value + ChatMessage("user", prompt)
             val snapshot = _contextSnapshot.value
-            val system = contextBuilder.build(context, snapshot)
+            val system = contextBuilder.build(context, snapshot) + "\n\n" + WORKSPACE_TOOL_INSTRUCTIONS
             val assistantIndex = history.size
             _messages.value = history + ChatMessage("assistant", "")
             repository.save(id, history)
@@ -235,24 +237,24 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                     _actionMessage.value = it.message ?: "Unable to prepare action review."
                     return@launch
                 }
-                if (freshReview == null) {
-                    _actionMessage.value = "This action cannot be reviewed safely."
-                    return@launch
-                }
-                _actionReviews.value = _actionReviews.value + (id to freshReview)
-                if (!freshReview.changed) {
-                    _actionProposals.value = _actionProposals.value.map { if (it.id == id) it.copy(status = NexusActionStatus.COMPLETED) else it }
-                    _actionMessage.value = "No changes to apply for ${freshReview.path}."
-                    return@launch
+                if (freshReview != null) {
+                    _actionReviews.value = _actionReviews.value + (id to freshReview)
+                    if (!freshReview.changed) {
+                        _actionProposals.value = _actionProposals.value.map { if (it.id == id) it.copy(status = NexusActionStatus.COMPLETED) else it }
+                        _actionMessage.value = "No changes to apply for ${freshReview.path}."
+                        return@launch
+                    }
                 }
             }
+
             _actionProposals.value = _actionProposals.value.map { if (it.id == id) it.copy(status = NexusActionStatus.EXECUTING) else it }
             val result = actionExecutor.execute(targetWorkspace, target.action)
             _actionProposals.value = _actionProposals.value.map { if (it.id == id) it.copy(status = if (result.success) NexusActionStatus.COMPLETED else NexusActionStatus.FAILED) else it }
-            _actionMessage.value = result.message
+            _actionMessage.value = result.output?.takeIf { it.isNotBlank() } ?: result.message
+
             if (result.success && (target.action.type == "open_file" || target.action.type == "focus_file")) openAction(id)
-            if (result.success && NexusActionPolicy.requiresApproval(target.action)) {
-                actionExecutor.preview(targetWorkspace, target)?.let { _actionReviews.value = _actionReviews.value + (id to it) }
+            if (result.success && target.action.type in MUTATING_ACTIONS) {
+                runCatching { workspaceContextService.refresh(targetWorkspace) }
             }
         }
     }
@@ -260,6 +262,36 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     private fun estimateTokens(text: String): Int = (text.length + 3) / 4
 
     override fun onCleared() { generationJob?.cancel(); super.onCleared() }
+
+    companion object {
+        private val MUTATING_ACTIONS = setOf("create_file", "create_directory", "patch_file", "replace_file", "delete_file", "rename_file", "copy_file", "move_file")
+        private const val WORKSPACE_TOOL_INSTRUCTIONS = """
+You are Nexus, an AI software-engineering agent operating inside the user's currently opened workspace.
+You can inspect and change workspace files through the Nexus action protocol. Never pretend you changed a file when you only described a change.
+
+For workspace operations, emit one or more actions using exactly:
+<nexus-action>{JSON}</nexus-action>
+
+Supported actions:
+- list_files: {\"type\":\"list_files\",\"path\":\"src\"}
+- read_file: {\"type\":\"read_file\",\"path\":\"src/Main.kt\"}
+- open_file: {\"type\":\"open_file\",\"path\":\"src/Main.kt\"}
+- focus_file: {\"type\":\"focus_file\",\"path\":\"src/Main.kt\"}
+- create_file: {\"type\":\"create_file\",\"path\":\"src/New.kt\",\"content\":\"...\",\"mimeType\":\"text/plain\"}
+- create_directory: {\"type\":\"create_directory\",\"path\":\"src/new\"}
+- patch_file: {\"type\":\"patch_file\",\"path\":\"src/Main.kt\",\"patch\":\"unified diff...\"}
+- replace_file: {\"type\":\"replace_file\",\"path\":\"src/Main.kt\",\"content\":\"...\"}
+- delete_file: {\"type\":\"delete_file\",\"path\":\"src/Old.kt\"}
+- rename_file: {\"type\":\"rename_file\",\"path\":\"src/Old.kt\",\"newName\":\"New.kt\"}
+- copy_file: {\"type\":\"copy_file\",\"path\":\"src/A.kt\",\"destination\":\"src/B.kt\"}
+- move_file: {\"type\":\"move_file\",\"path\":\"src/A.kt\",\"destination\":\"src/new/A.kt\"}
+
+Read/list/open/focus operations are non-mutating. File creation, modification, deletion, rename, copy and move require explicit user approval in Nexus before execution. Respect that approval boundary.
+Use relative paths only. Never request absolute paths or paths containing '..'.
+When a task requires understanding existing code, request read_file/list_files actions instead of inventing file contents.
+When modifying existing code, prefer patch_file so Nexus can show a diff and detect concurrent edits. Use replace_file when a complete replacement is genuinely safer.
+After proposing an action, wait for Nexus to execute it and for the next context/tool result before claiming the operation succeeded.
+"""
 }
 
 data class TokenUsage(val input: Int = 0, val output: Int = 0) { val total: Int get() = input + output }
