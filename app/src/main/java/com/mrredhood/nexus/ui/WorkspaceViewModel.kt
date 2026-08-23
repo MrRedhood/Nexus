@@ -7,6 +7,8 @@ import androidx.lifecycle.viewModelScope
 import com.mrredhood.nexus.core.editor.EditorDocument
 import com.mrredhood.nexus.core.editor.EditorDocumentManager
 import com.mrredhood.nexus.core.editor.EditorDocumentState
+import com.mrredhood.nexus.core.editor.EditorViewState
+import com.mrredhood.nexus.core.editor.EditorTabManager
 import com.mrredhood.nexus.core.workspace.Workspace
 import com.mrredhood.nexus.core.workspace.WorkspaceEntry
 import com.mrredhood.nexus.core.workspace.WorkspaceFile
@@ -25,6 +27,7 @@ class WorkspaceViewModel(context: Context) : ViewModel() {
     private val fileSystem = WorkspaceFileSystem(context.applicationContext)
     private val searchService = WorkspaceSearch(fileSystem)
     private val documentManager = EditorDocumentManager()
+    private val tabManager = EditorTabManager(context.applicationContext)
     private var searchJob: Job? = null
     private var navigationJob: Job? = null
     private var openedWorkspaceId: String? = null
@@ -55,7 +58,19 @@ class WorkspaceViewModel(context: Context) : ViewModel() {
         openedWorkspaceId = workspace.id
         clearEditorState()
         load(workspace, "", emptyList())
+        restoreOpenTabs(workspace)
     }
+
+    private fun restoreOpenTabs(workspace: Workspace) {
+        viewModelScope.launch {
+            val paths = tabManager.restore(workspace.id)
+            for (path in paths) runCatching { fileSystem.read(workspace, path) }.onSuccess { file -> documentManager.open(workspace.id, file) }
+            val active = tabManager.active(workspace.id)
+            if (active != null) documentManager.activate(workspace.id, active)?.let(::publishDocument)
+            refreshOpenDocuments()
+        }
+    }
+
     fun enter(workspace: Workspace, relativePath: String) = navigateTo(workspace, relativePath)
     fun navigateTo(workspace: Workspace, relativePath: String) { val target = normalizePath(relativePath); val current = _currentPath.value; if (target == current) return refresh(workspace); val stack = _navigationStack.value; load(workspace, target, if (target.isEmpty()) emptyList() else (stack + current).filter { it.isNotEmpty() }.distinct()) }
     fun back(workspace: Workspace): Boolean { val stack = _navigationStack.value; if (stack.isNotEmpty()) { load(workspace, stack.last(), stack.dropLast(1)); return true }; val current = _currentPath.value; if (current.isNotEmpty()) { load(workspace, current.substringBeforeLast('/', ""), emptyList()); return true }; return false }
@@ -68,8 +83,16 @@ class WorkspaceViewModel(context: Context) : ViewModel() {
     fun read(workspace: Workspace, relativePath: String) {
         viewModelScope.launch {
             runCatching { fileSystem.read(workspace, relativePath) }
-                .onSuccess { file -> publishDocument(documentManager.open(workspace.id, file)); refreshOpenDocuments() }
+                .onSuccess { file -> tabManager.open(workspace.id, file.relativePath); publishDocument(documentManager.open(workspace.id, file)); refreshOpenDocuments() }
                 .onFailure { _error.value = it.message ?: "Unable to read file"; _editorError.value = _error.value }
+        }
+    }
+
+    fun activateEditor(workspace: Workspace, relativePath: String) {
+        viewModelScope.launch {
+            tabManager.activate(workspace.id, relativePath)
+            documentManager.activate(workspace.id, relativePath)?.let(::publishDocument)
+            refreshOpenDocuments()
         }
     }
 
@@ -79,13 +102,15 @@ class WorkspaceViewModel(context: Context) : ViewModel() {
         viewModelScope.launch { documentManager.update(workspaceId, path, content)?.let { publishDocument(it); refreshOpenDocuments() } }
     }
 
+    fun updateEditorViewState(viewState: EditorViewState) {
+        val workspaceId = openedWorkspaceId ?: return
+        val path = _editorPath.value ?: return
+        viewModelScope.launch { documentManager.updateViewState(workspaceId, path, viewState)?.let { publishDocument(it); refreshOpenDocuments() } }
+    }
+
     fun reloadEditor(workspace: Workspace) {
         val path = _editorPath.value ?: return
-        viewModelScope.launch {
-            runCatching { fileSystem.read(workspace, path) }
-                .onSuccess { file -> publishDocument(documentManager.synchronize(workspace.id, file)); refreshOpenDocuments() }
-                .onFailure { _error.value = it.message ?: "Unable to reload file"; _editorError.value = _error.value }
-        }
+        viewModelScope.launch { runCatching { fileSystem.read(workspace, path) }.onSuccess { file -> publishDocument(documentManager.synchronize(workspace.id, file)); refreshOpenDocuments() }.onFailure { _error.value = it.message ?: "Unable to reload file"; _editorError.value = _error.value } }
     }
 
     fun saveEditor(workspace: Workspace) {
@@ -103,8 +128,7 @@ class WorkspaceViewModel(context: Context) : ViewModel() {
                 val message = e.message ?: "Unable to save file"
                 val conflict = message.contains("changed outside Nexus", true) || message.contains("deleted or replaced", true)
                 val state = if (conflict) documentManager.markConflict(workspace.id, path, message) else documentManager.markError(workspace.id, path, message)
-                state?.let(::publishDocument)
-                _error.value = message; _editorError.value = message
+                state?.let(::publishDocument); _error.value = message; _editorError.value = message
             } finally { _saving.value = false; refreshOpenDocuments() }
         }
     }
@@ -112,31 +136,55 @@ class WorkspaceViewModel(context: Context) : ViewModel() {
     fun closeEditor(workspace: Workspace, relativePath: String? = null) {
         val path = relativePath ?: _editorPath.value ?: return
         viewModelScope.launch {
+            tabManager.close(workspace.id, path)
             documentManager.close(workspace.id, path)
-            val next = documentManager.active()
-            if (next != null) publishDocument(next) else clearEditorState()
+            val nextPath = tabManager.active(workspace.id)
+            if (nextPath != null) documentManager.activate(workspace.id, nextPath)?.let(::publishDocument) else clearEditorState()
             refreshOpenDocuments()
         }
     }
 
-    fun closeWorkspaceDocuments(workspace: Workspace) {
-        viewModelScope.launch { documentManager.closeWorkspace(workspace.id); clearEditorState(); refreshOpenDocuments() }
+    fun closeOtherEditors(workspace: Workspace, keepRelativePath: String) {
+        viewModelScope.launch {
+            tabManager.closeOthers(workspace.id, keepRelativePath)
+            documentManager.closeOthers(workspace.id, keepRelativePath)
+            documentManager.activate(workspace.id, keepRelativePath)?.let(::publishDocument)
+            refreshOpenDocuments()
+        }
     }
 
+    fun closeAllEditors(workspace: Workspace) {
+        viewModelScope.launch {
+            tabManager.closeAll(workspace.id)
+            documentManager.closeAll(workspace.id)
+            clearEditorState()
+            refreshOpenDocuments()
+        }
+    }
+
+    fun reopenClosedEditor(workspace: Workspace) {
+        viewModelScope.launch {
+            val document = documentManager.reopenLastClosed(workspace.id)
+            if (document != null) {
+                tabManager.open(workspace.id, document.relativePath)
+                publishDocument(document)
+                refreshOpenDocuments()
+            } else {
+                val path = tabManager.reopenLastClosed(workspace.id)
+                if (path != null) read(workspace, path)
+            }
+        }
+    }
+
+    fun closeWorkspaceDocuments(workspace: Workspace) { viewModelScope.launch { documentManager.closeWorkspace(workspace.id); clearEditorState(); refreshOpenDocuments() } }
     fun hasUnsavedChanges(workspace: Workspace, onResult: (Boolean) -> Unit) { viewModelScope.launch { onResult(documentManager.hasUnsavedChanges(workspace.id)) } }
-
-    fun clearEditor() {
-        val workspaceId = openedWorkspaceId
-        val path = _editorPath.value
-        if (workspaceId == null || path == null) { clearEditorState(); return }
-        viewModelScope.launch { documentManager.close(workspaceId, path); clearEditorState(); refreshOpenDocuments() }
-    }
+    fun clearEditor() { val workspaceId = openedWorkspaceId; val path = _editorPath.value; if (workspaceId == null || path == null) { clearEditorState(); return }; viewModelScope.launch { tabManager.close(workspaceId, path); documentManager.close(workspaceId, path); clearEditorState(); refreshOpenDocuments() } }
     fun clearOpenedFile() = clearEditor()
     fun clearError() { _error.value = null; _editorError.value = null }
 
     fun createFile(workspace: Workspace, name: String) = mutateAndRefresh(workspace) { fileSystem.createFile(workspace, join(_currentPath.value, name), mimeTypeFor(name)) }
     fun createDirectory(workspace: Workspace, name: String) = mutateAndRefresh(workspace) { fileSystem.createDirectory(workspace, join(_currentPath.value, name)) }
-    fun delete(workspace: Workspace, path: String) = mutateAndRefresh(workspace) { if (_editorPath.value == path) viewModelScope.launch { documentManager.close(workspace.id, path) }; fileSystem.delete(workspace, path) }
+    fun delete(workspace: Workspace, path: String) = mutateAndRefresh(workspace) { if (_editorPath.value == path) viewModelScope.launch { tabManager.close(workspace.id, path); documentManager.close(workspace.id, path) }; fileSystem.delete(workspace, path) }
     fun rename(workspace: Workspace, path: String, name: String) = mutateAndRefresh(workspace) { fileSystem.rename(workspace, path, name) }
     fun copy(workspace: Workspace, source: String, destination: String) = mutateAndRefresh(workspace) { fileSystem.copy(workspace, source, destination) }
     fun move(workspace: Workspace, source: String, destination: String) = mutateAndRefresh(workspace) { fileSystem.move(workspace, source, destination) }
