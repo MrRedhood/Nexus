@@ -8,13 +8,13 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.DeleteSweep
 import androidx.compose.material.icons.outlined.Send
 import androidx.compose.material.icons.outlined.Stop
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -40,42 +40,60 @@ fun ChatScreen(project: NexusProject, workspace: Workspace, context: ChatContext
     val messages by vm.messages.collectAsStateWithLifecycle()
     val generating by vm.generating.collectAsStateWithLifecycle()
     val error by vm.error.collectAsStateWithLifecycle()
+    val usage by vm.tokenUsage.collectAsStateWithLifecycle()
     var input by remember { mutableStateOf("") }
+    val listState = rememberLazyListState()
 
     LaunchedEffect(workspace.id) { vm.open(workspace.id) }
+    LaunchedEffect(messages.size, messages.lastOrNull()?.content) {
+        if (messages.isNotEmpty()) listState.animateScrollToItem(messages.lastIndex)
+    }
 
     Column(Modifier.fillMaxSize().padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
             Column(Modifier.weight(1f)) {
                 Text("Nexus AI", style = MaterialTheme.typography.titleLarge)
                 Text(project.name, style = MaterialTheme.typography.bodySmall)
+                if (usage.total > 0) Text("Tokens: ${usage.total} (${usage.input} in / ${usage.output} out)", style = MaterialTheme.typography.labelSmall)
             }
-            IconButton(onClick = vm::clear) { Icon(Icons.Outlined.DeleteSweep, "Clear chat") }
-            onClose?.let { close -> Text("×", modifier = Modifier.padding(12.dp), style = MaterialTheme.typography.titleLarge) }
+            IconButton(onClick = vm::clear, enabled = !generating) { Icon(Icons.Outlined.DeleteSweep, "Clear chat") }
+            onClose?.let { IconButton(onClick = it) { Text("×", style = MaterialTheme.typography.titleLarge) } }
         }
-        LazyColumn(Modifier.weight(1f).fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+
+        LazyColumn(
+            state = listState,
+            modifier = Modifier.weight(1f).fillMaxWidth(),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
             items(messages) { message ->
                 val assistant = message.role == "assistant"
                 Card(
                     Modifier.fillMaxWidth(),
-                    colors = CardDefaults.cardColors(containerColor = if (assistant) MaterialTheme.colorScheme.surfaceContainerHighest else MaterialTheme.colorScheme.primaryContainer)
-                ) { Text(message.content, Modifier.padding(14.dp)) }
+                    colors = CardDefaults.cardColors(
+                        containerColor = if (assistant) MaterialTheme.colorScheme.surfaceContainerHighest
+                        else MaterialTheme.colorScheme.primaryContainer
+                    )
+                ) {
+                    Text(message.content.ifBlank { "…" }, Modifier.padding(14.dp))
+                }
             }
-            if (generating) item { Text("Nexus is thinking…", style = MaterialTheme.typography.bodySmall) }
             error?.let { message -> item { Text(message, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(8.dp)) } }
         }
+
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             OutlinedTextField(
                 value = input,
                 onValueChange = { input = it },
                 modifier = Modifier.weight(1f),
                 placeholder = { Text("Ask Nexus about your code…") },
-                maxLines = 5
+                maxLines = 5,
+                enabled = !generating
             )
-            IconButton(onClick = { if (generating) vm.stop() else { vm.send(input, context); input = "" } }) {
+            IconButton(
+                onClick = { if (generating) vm.stop() else { vm.send(input, context); input = "" } }
+            ) {
                 Icon(if (generating) Icons.Outlined.Stop else Icons.Outlined.Send, if (generating) "Stop" else "Send")
             }
         }
-        if (generating) FilledTonalButton(onClick = vm::stop, modifier = Modifier.fillMaxWidth()) { Icon(Icons.Outlined.Stop, null); Text("Stop generation", Modifier.padding(start = 6.dp)) }
     }
 }
