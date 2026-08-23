@@ -11,6 +11,7 @@ import com.mrredhood.nexus.core.workspace.WorkspaceFileSystem
 import com.mrredhood.nexus.core.workspace.WorkspaceSearch
 import com.mrredhood.nexus.core.workspace.WorkspaceSearchOptions
 import com.mrredhood.nexus.core.workspace.WorkspaceSearchResult
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -58,70 +59,44 @@ class WorkspaceViewModel(context: Context) : ViewModel() {
         _searching.value = true
         _error.value = null
         searchJob = viewModelScope.launch {
-            try {
-                _searchResults.value = searchService.search(workspace, options)
-            } catch (_: kotlinx.coroutines.CancellationException) {
-                throw kotlinx.coroutines.CancellationException()
-            } catch (e: Exception) {
-                _error.value = e.message ?: "Search failed"
-            } finally {
-                _searching.value = false
-            }
+            try { _searchResults.value = searchService.search(workspace, options) }
+            catch (_: CancellationException) { throw CancellationException() }
+            catch (e: Exception) { _error.value = e.message ?: "Search failed" }
+            finally { _searching.value = false }
         }
     }
 
     fun clearSearch() {
-        searchJob?.cancel()
-        searchJob = null
-        _searchQuery.value = ""
-        _searchResults.value = emptyList()
-        _searching.value = false
+        searchJob?.cancel(); searchJob = null
+        _searchQuery.value = ""; _searchResults.value = emptyList(); _searching.value = false
     }
 
     fun read(workspace: Workspace, relativePath: String) {
         viewModelScope.launch {
             runCatching { fileSystem.read(workspace, relativePath) }
                 .onSuccess { file ->
-                    _openedFile.value = file
-                    _editorPath.value = file.relativePath
-                    _editorContent.value = file.content
-                    _editorDirty.value = false
+                    _openedFile.value = file; _editorPath.value = file.relativePath
+                    _editorContent.value = file.content; _editorDirty.value = false
                 }
                 .onFailure { _error.value = it.message ?: "Unable to read file" }
         }
     }
 
-    fun updateEditorContent(content: String) {
-        if (_editorContent.value == null) return
-        _editorContent.value = content
-        _editorDirty.value = true
-    }
+    fun updateEditorContent(content: String) { if (_editorContent.value != null) { _editorContent.value = content; _editorDirty.value = true } }
 
     fun saveEditor(workspace: Workspace) {
-        val path = _editorPath.value ?: return
-        val content = _editorContent.value ?: return
+        val path = _editorPath.value ?: return; val content = _editorContent.value ?: return
         if (!_editorDirty.value) return
         viewModelScope.launch {
-            _saving.value = true
-            _error.value = null
+            _saving.value = true; _error.value = null
             runCatching { fileSystem.write(workspace, path, content, mimeTypeFor(path)) }
-                .onSuccess { file ->
-                    _openedFile.value = file
-                    _editorContent.value = file.content
-                    _editorDirty.value = false
-                }
+                .onSuccess { file -> _openedFile.value = file; _editorContent.value = file.content; _editorDirty.value = false }
                 .onFailure { _error.value = it.message ?: "Unable to save file" }
             _saving.value = false
         }
     }
 
-    fun clearEditor() {
-        _openedFile.value = null
-        _editorPath.value = null
-        _editorContent.value = null
-        _editorDirty.value = false
-    }
-
+    fun clearEditor() { _openedFile.value = null; _editorPath.value = null; _editorContent.value = null; _editorDirty.value = false }
     fun clearOpenedFile() = clearEditor()
     fun clearError() { _error.value = null }
 
@@ -129,11 +104,12 @@ class WorkspaceViewModel(context: Context) : ViewModel() {
     fun createDirectory(workspace: Workspace, name: String) = mutateAndRefresh(workspace) { fileSystem.createDirectory(workspace, join(_currentPath.value, name)) }
     fun delete(workspace: Workspace, path: String) = mutateAndRefresh(workspace) { fileSystem.delete(workspace, path) }
     fun rename(workspace: Workspace, path: String, name: String) = mutateAndRefresh(workspace) { fileSystem.rename(workspace, path, name) }
+    fun copy(workspace: Workspace, source: String, destination: String) = mutateAndRefresh(workspace) { fileSystem.copy(workspace, source, destination) }
+    fun move(workspace: Workspace, source: String, destination: String) = mutateAndRefresh(workspace) { fileSystem.move(workspace, source, destination) }
 
     private fun load(workspace: Workspace, path: String) {
         viewModelScope.launch {
-            _loading.value = true
-            _error.value = null
+            _loading.value = true; _error.value = null
             runCatching { fileSystem.list(workspace, path) }
                 .onSuccess { _currentPath.value = path; _entries.value = it }
                 .onFailure { _error.value = it.message ?: "Unable to load workspace" }
