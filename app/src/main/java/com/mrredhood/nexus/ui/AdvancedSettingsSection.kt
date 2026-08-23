@@ -1,5 +1,6 @@
 package com.mrredhood.nexus.ui
 
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -47,12 +48,10 @@ fun AdvancedSettingsSection() {
             if (loadingModels) Text("Loading all models from ${settings.provider}…", style = MaterialTheme.typography.bodySmall)
             modelError?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
             TextButton(onClick = { vm.loadModels(settings.provider) }) { Text("Refresh model list") }
-
             OutlinedTextField(value = apiKey, onValueChange = { apiKey = it }, modifier = Modifier.fillMaxWidth(), label = { Text("${settings.provider} API key") }, placeholder = { Text("Enter key") }, singleLine = true, visualTransformation = PasswordVisualTransformation())
             Text(if (vm.hasApiKey(settings.provider)) "API key is securely stored on this device." else "No API key stored for this provider.", style = MaterialTheme.typography.bodySmall)
             Button(enabled = apiKey.isNotBlank(), onClick = { vm.saveApiKey(settings.provider, apiKey); apiKey = ""; testMessage = null }, modifier = Modifier.fillMaxWidth()) { Text("Save API key") }
             if (vm.hasApiKey(settings.provider)) TextButton(onClick = { vm.clearApiKey(settings.provider); apiKey = ""; testMessage = null }, modifier = Modifier.fillMaxWidth()) { Text("Remove stored key") }
-
             OutlinedTextField(value = endpoint, onValueChange = { endpoint = it }, modifier = Modifier.fillMaxWidth(), label = { Text("Custom endpoint (optional)") }, placeholder = { Text(defaultEndpointHint(settings.provider)) }, singleLine = true)
             Button(onClick = { vm.update { it.copy(endpoint = endpoint.trim()) }; vm.loadModels(settings.provider) }, modifier = Modifier.fillMaxWidth()) { Text("Save endpoint") }
             Button(enabled = vm.hasApiKey(settings.provider) && !testRunning, onClick = { testRunning = true; testMessage = null; vm.testConnection { success, message -> testRunning = false; testSuccess = success; testMessage = message } }, modifier = Modifier.fillMaxWidth()) { Text(if (testRunning) "Testing connection…" else "Test connection") }
@@ -70,7 +69,5 @@ fun AdvancedSettingsSection() {
 }
 
 @Composable private fun ModelMenuText(model: AiModel) { Column { Text(model.name.ifBlank { model.id }, maxLines = 1); Text(buildString { append(model.id); if (model.premium) append(" · Premium"); else if (model.pricing.free) append(" · Free"); model.modalities.forEach { append(" · $it") } }, style = MaterialTheme.typography.labelSmall, maxLines = 1) } }
-
 @Composable private fun FilterRow(selected: String, onSelect: (String) -> Unit) { Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(2.dp)) { listOf("all", "free", "premium", "text", "image", "video", "audio").forEach { value -> TextButton(onClick = { onSelect(value) }) { Text(if (selected == value) "✓ ${value.replaceFirstChar { it.uppercase() }}" else value.replaceFirstChar { it.uppercase() }) } } } }
-
 private fun defaultEndpointHint(provider: String): String = when { provider.equals("OpenRouter", true) -> "https://openrouter.ai/api/v1/chat/completions"; provider.equals("DeepInfra", true) -> "https://api.deepinfra.com/v1/openai/chat/completions"; provider.equals("LiteLLM", true) -> "http://localhost:4000/v1/chat/completions"; else -> "Gemini endpoint is built in" }
