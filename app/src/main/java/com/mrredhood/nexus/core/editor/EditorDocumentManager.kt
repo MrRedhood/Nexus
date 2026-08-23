@@ -4,12 +4,7 @@ import com.mrredhood.nexus.core.workspace.WorkspaceFile
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
-/**
- * Owns the lifecycle of open editor documents independently from the UI.
- *
- * One document exists per workspace/path pair. The manager also tracks the
- * active document so screens can be recreated without losing editor state.
- */
+/** Owns open editor documents independently from Compose UI. */
 class EditorDocumentManager {
     private val mutex = Mutex()
     private val documents = LinkedHashMap<DocumentKey, EditorDocument>()
@@ -18,13 +13,9 @@ class EditorDocumentManager {
     suspend fun open(workspaceId: String, file: WorkspaceFile): EditorDocument = mutex.withLock {
         val key = DocumentKey(workspaceId, file.relativePath)
         val existing = documents[key]
-        val document = if (existing == null) {
-            EditorDocument.from(workspaceId, file)
-        } else if (existing.isDirty) {
-            existing
-        } else {
-            existing.synchronizedWith(file)
-        }
+        val document = if (existing == null) EditorDocument.from(workspaceId, file)
+        else if (existing.isDirty) existing
+        else existing.synchronizedWith(file)
         documents[key] = document
         activeKey = key
         document
@@ -32,12 +23,10 @@ class EditorDocumentManager {
 
     suspend fun activate(workspaceId: String, relativePath: String): EditorDocument? = mutex.withLock {
         val key = DocumentKey(workspaceId, relativePath)
-        return@withLock documents[key]?.also { activeKey = key }
+        documents[key]?.also { activeKey = key }
     }
 
-    suspend fun active(): EditorDocument? = mutex.withLock {
-        activeKey?.let(documents::get)
-    }
+    suspend fun active(): EditorDocument? = mutex.withLock { activeKey?.let(documents::get) }
 
     suspend fun get(workspaceId: String, relativePath: String): EditorDocument? = mutex.withLock {
         documents[DocumentKey(workspaceId, relativePath)]
@@ -47,6 +36,24 @@ class EditorDocumentManager {
         val key = DocumentKey(workspaceId, relativePath)
         val current = documents[key] ?: return@withLock null
         val updated = current.withContent(content)
+        documents[key] = updated
+        activeKey = key
+        updated
+    }
+
+    suspend fun updateViewState(
+        workspaceId: String,
+        relativePath: String,
+        viewState: EditorViewState
+    ): EditorDocument? = mutex.withLock {
+        val key = DocumentKey(workspaceId, relativePath)
+        val current = documents[key] ?: return@withLock null
+        val updated = current.copy(
+            cursorPosition = viewState.cursorPosition.coerceIn(0, current.content.length),
+            selectionStart = viewState.selectionStart.coerceIn(0, current.content.length),
+            selectionEnd = viewState.selectionEnd.coerceIn(0, current.content.length),
+            scrollPosition = viewState.scrollPosition.coerceAtLeast(0)
+        )
         documents[key] = updated
         activeKey = key
         updated
@@ -79,6 +86,16 @@ class EditorDocumentManager {
         removed
     }
 
+    suspend fun closeOthers(workspaceId: String, keepRelativePath: String): List<EditorDocument> = mutex.withLock {
+        val keep = DocumentKey(workspaceId, keepRelativePath)
+        val removed = documents.filterKeys { it.workspaceId == workspaceId && it != keep }.values.toList()
+        documents.keys.removeAll { it.workspaceId == workspaceId && it != keep }
+        activeKey = if (documents.containsKey(keep)) keep else documents.keys.lastOrNull()
+        removed
+    }
+
+    suspend fun closeAll(workspaceId: String): List<EditorDocument> = closeWorkspace(workspaceId)
+
     suspend fun closeWorkspace(workspaceId: String): List<EditorDocument> = mutex.withLock {
         val removed = documents.filterKeys { it.workspaceId == workspaceId }.values.toList()
         documents.keys.removeAll { it.workspaceId == workspaceId }
@@ -86,7 +103,7 @@ class EditorDocumentManager {
         removed
     }
 
-    suspend fun closeAll(): List<EditorDocument> = mutex.withLock {
+    suspend fun closeEverything(): List<EditorDocument> = mutex.withLock {
         val removed = documents.values.toList()
         documents.clear()
         activeKey = null
@@ -95,25 +112,15 @@ class EditorDocumentManager {
 
     suspend fun all(): List<EditorDocument> = mutex.withLock { documents.values.toList() }
 
-    suspend fun dirtyDocuments(): List<EditorDocument> = mutex.withLock {
-        documents.values.filter(EditorDocument::isDirty)
-    }
+    suspend fun dirtyDocuments(): List<EditorDocument> = mutex.withLock { documents.values.filter(EditorDocument::isDirty) }
 
     suspend fun hasUnsavedChanges(workspaceId: String? = null): Boolean = mutex.withLock {
-        documents.values.any { document ->
-            (workspaceId == null || document.workspaceId == workspaceId) && document.isDirty
-        }
+        documents.values.any { document -> (workspaceId == null || document.workspaceId == workspaceId) && document.isDirty }
     }
 
-    suspend fun activeKey(): Pair<String, String>? = mutex.withLock {
-        activeKey?.let { it.workspaceId to it.relativePath }
-    }
+    suspend fun activeKey(): Pair<String, String>? = mutex.withLock { activeKey?.let { it.workspaceId to it.relativePath } }
 
-    private fun updateLocked(
-        workspaceId: String,
-        relativePath: String,
-        transform: (EditorDocument) -> EditorDocument
-    ): EditorDocument? {
+    private fun updateLocked(workspaceId: String, relativePath: String, transform: (EditorDocument) -> EditorDocument): EditorDocument? {
         val key = DocumentKey(workspaceId, relativePath)
         val current = documents[key] ?: return null
         val updated = transform(current)
@@ -122,8 +129,5 @@ class EditorDocumentManager {
         return updated
     }
 
-    private data class DocumentKey(
-        val workspaceId: String,
-        val relativePath: String
-    )
+    private data class DocumentKey(val workspaceId: String, val relativePath: String)
 }
