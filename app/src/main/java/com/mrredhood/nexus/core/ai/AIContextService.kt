@@ -23,25 +23,30 @@ class AIContextService {
             }
 
             val remaining = budget - used
-            if (remaining > 0 && isTruncatable(item) && remaining >= 16) {
+            if (remaining > 0) {
                 val truncatedContent = truncateToTokens(item.content, remaining)
-                val truncated = item.copy(
-                    content = truncatedContent,
-                    estimatedTokens = estimateTokens(truncatedContent),
-                    reason = "truncated to fit context budget"
-                )
-                included += truncated
-                used += truncated.estimatedTokens
-            } else {
-                dropped += item.copy(included = false, reason = "context budget exceeded")
+                if (truncatedContent.isNotEmpty()) {
+                    val truncated = item.copy(
+                        content = truncatedContent,
+                        estimatedTokens = estimateTokens(truncatedContent),
+                        reason = "${item.reason ?: "context source"}; truncated to fit context budget"
+                    )
+                    if (used + truncated.estimatedTokens <= budget) {
+                        included += truncated
+                        used += truncated.estimatedTokens
+                        continue
+                    }
+                }
             }
+
+            dropped += item.copy(included = false, reason = "context budget exceeded")
         }
 
         return AIContextSnapshot(
             items = included,
             estimatedTokens = used,
             tokenLimit = budget,
-            truncated = dropped.isNotEmpty() || included.any { it.reason == "truncated to fit context budget" },
+            truncated = dropped.isNotEmpty() || included.any { it.reason?.contains("truncated to fit context budget") == true },
             droppedItems = dropped
         )
     }
@@ -80,19 +85,21 @@ class AIContextService {
 
     private fun bounded(item: AIContextItem, options: AIContextOptions, reason: String): AIContextItem {
         if (item.content.length <= options.maxFileSizeChars) return item.copy(reason = reason)
-        val content = item.content.take(options.maxFileSizeChars) + "\n…[file content truncated]"
+        val suffix = "\n…[file content truncated]"
+        val content = item.content.take((options.maxFileSizeChars - suffix.length).coerceAtLeast(0)) + suffix
         return item.copy(content = content, estimatedTokens = estimateTokens(content), reason = "$reason; file size limit")
     }
 
     private fun item(source: AIContextSource, label: String, content: String, reason: String): AIContextItem =
         AIContextItem(source, label, content = content, estimatedTokens = estimateTokens(content), reason = reason)
 
-    private fun isTruncatable(item: AIContextItem): Boolean =
-        item.source != AIContextSource.USER_MESSAGE && item.source != AIContextSource.SELECTION
-
     private fun truncateToTokens(content: String, tokens: Int): String {
-        val chars = (tokens * 4).coerceAtMost(content.length)
-        return content.take(chars) + if (chars < content.length) "\n…[context truncated]" else ""
+        if (tokens <= 0) return ""
+        val suffix = "\n…[context truncated]"
+        val maxChars = tokens * 4
+        if (content.length <= maxChars) return content
+        val contentChars = (maxChars - suffix.length).coerceAtLeast(0)
+        return if (contentChars == 0) "" else content.take(contentChars) + suffix
     }
 
     companion object {
