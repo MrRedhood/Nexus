@@ -5,7 +5,7 @@ package com.mrredhood.nexus
 import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
-import androidx.activity.BackHandler
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
@@ -22,18 +22,19 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.AnnotatedString
-import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.text.input.VisualTransformation
+import androidx.compose.ui.text.input.TransformedText
+import androidx.compose.ui.text.input.OffsetMapping
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.documentfile.provider.DocumentFile
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.mrredhood.nexus.core.editor.EditorFontResolver
 import com.mrredhood.nexus.core.editor.EditorInputRules
 import com.mrredhood.nexus.core.editor.LanguageRegistry
-import com.mrredhood.nexus.core.editor.NexusLanguage
 import com.mrredhood.nexus.core.editor.SyntaxHighlighter
 import com.mrredhood.nexus.core.model.NexusProject
 import com.mrredhood.nexus.core.settings.NexusSettings
@@ -173,7 +174,7 @@ private fun WorkspaceScreen(project: NexusProject, workspace: Workspace, onBack:
     nameDialog?.let { action -> NameDialog(action.title, "Rename", { nameDialog = null }, action.entry.name) { name -> vm.rename(workspace, action.entry.relativePath, name); nameDialog = null } }
     destinationDialog?.let { action -> DestinationDialog(action.title, action.entry, { destinationDialog = null }) { destination -> if (action.move) vm.move(workspace, action.entry.relativePath, destination) else vm.copy(workspace, action.entry.relativePath, destination); destinationDialog = null } }
     deleteTarget?.let { entry -> AlertDialog(onDismissRequest = { deleteTarget = null }, title = { Text("Delete ${if (entry.type == EntryType.DIRECTORY) "folder" else "file"}?") }, text = { Text("This permanently deletes ${entry.relativePath}. This action cannot be undone.") }, confirmButton = { FilledTonalButton(onClick = { vm.delete(workspace, entry.relativePath); deleteTarget = null }) { Text("Delete") } }, dismissButton = { TextButton(onClick = { deleteTarget = null }) { Text("Cancel") } }) }
-    error?.let { message -> AlertDialog(onDismissRequest = vm::clearError, title = { Text("Workspace error") }, text = { Text(message) }, confirmButton = { TextButton(onClick = vm::clearError) { Text("OK") }) }
+    error?.let { message -> AlertDialog(onDismissRequest = vm::clearError, title = { Text("Workspace error") }, text = { Text(message) }, confirmButton = { TextButton(onClick = vm::clearError) { Text("OK") } }) }
 }
 
 enum class FileAction { RENAME, COPY, MOVE, DELETE }
@@ -206,10 +207,15 @@ private fun EditorScreen(path: String, content: String, dirty: Boolean, saving: 
         if (content != value.text) value = value.copy(text = content, selection = androidx.compose.ui.text.TextRange(content.length))
     }
     val fontFamily = remember(settings.editorFont) { EditorFontResolver.resolve(settings.editorFont) }
-    val highlighted = remember(value.text, language, settings.syntaxHighlighting) { SyntaxHighlighter.highlight(value.text, language, settings.syntaxHighlighting) }
+    val visualTransformation = remember(language, settings.syntaxHighlighting) {
+        object : VisualTransformation {
+            override fun filter(text: androidx.compose.ui.text.AnnotatedString): TransformedText =
+                TransformedText(SyntaxHighlighter.highlight(text.text, language, settings.syntaxHighlighting), OffsetMapping.Identity)
+        }
+    }
     val textStyle = MaterialTheme.typography.bodyMedium.copy(fontFamily = fontFamily, fontSize = settings.editorFontSize.sp)
 
-    Scaffold(topBar = { TopAppBar(title = { Column { Text(path.substringAfterLast('/')); Text("${language.displayName} · ${if (dirty) "Unsaved changes" else "Saved"}", style = MaterialTheme.typography.labelSmall) } }, navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.Outlined.ArrowBack, "Close editor") }, actions = { IconButton(enabled = dirty && !saving, onClick = onSave) { if (saving) CircularProgressIndicator(modifier = Modifier.padding(4.dp)) else Icon(Icons.Outlined.Save, "Save") } }) }) { padding ->
+    Scaffold(topBar = { TopAppBar(title = { Column { Text(path.substringAfterLast('/')); Text("${language.displayName} · ${if (dirty) "Unsaved changes" else "Saved"}", style = MaterialTheme.typography.labelSmall) } }, navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.Outlined.ArrowBack, "Close editor") } }, actions = { IconButton(enabled = dirty && !saving, onClick = onSave) { if (saving) CircularProgressIndicator(modifier = Modifier.padding(4.dp)) else Icon(Icons.Outlined.Save, "Save") } }) }) { padding ->
         Column(Modifier.fillMaxSize().padding(padding)) {
             if (documents.isNotEmpty()) {
                 Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 8.dp, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -233,12 +239,8 @@ private fun EditorScreen(path: String, content: String, dirty: Boolean, saving: 
                     },
                     modifier = Modifier.fillMaxSize().padding(12.dp).verticalScroll(rememberScrollState()),
                     textStyle = textStyle,
-                    decorationBox = { inner ->
-                        Box {
-                            Text(AnnotatedString(highlighted.text), style = textStyle.copy(color = MaterialTheme.colorScheme.onSurface), modifier = Modifier.fillMaxWidth())
-                            inner()
-                        }
-                    }
+                    visualTransformation = visualTransformation,
+                    singleLine = false
                 )
             }
         }
