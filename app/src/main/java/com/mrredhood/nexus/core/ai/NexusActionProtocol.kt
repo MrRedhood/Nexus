@@ -4,17 +4,25 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.util.UUID
 
-/** Structured action protocol emitted by Nexus AI instead of fragile prose commands. */
+/** Structured action protocol emitted by Nexus AI for workspace operations. */
 object NexusActionProtocol {
     private const val OPEN = "<nexus-action>"
     private const val CLOSE = "</nexus-action>"
 
+    /** Actions the model may request. Mutating actions always require explicit user approval. */
     private val allowedTypes = setOf(
+        "list_files",
         "open_file",
         "focus_file",
         "read_file",
+        "create_file",
+        "create_directory",
         "patch_file",
-        "replace_file"
+        "replace_file",
+        "delete_file",
+        "rename_file",
+        "copy_file",
+        "move_file"
     )
 
     fun extract(text: String): List<NexusActionProposal> {
@@ -22,60 +30,75 @@ object NexusActionProtocol {
         val proposals = mutableListOf<NexusActionProposal>()
         var cursor = 0
         while (true) {
-            val start = text.indexOf(OPEN, cursor, ignoreCase = false)
+            val start = text.indexOf(OPEN, cursor)
             if (start < 0) break
             val payloadStart = start + OPEN.length
-            val end = text.indexOf(CLOSE, payloadStart, ignoreCase = false)
+            val end = text.indexOf(CLOSE, payloadStart)
             if (end < 0) break
-            val payload = text.substring(payloadStart, end).trim()
-            parsePayload(payload)?.let(proposals::add)
+            parsePayload(text.substring(payloadStart, end).trim())?.let(proposals::add)
             cursor = end + CLOSE.length
         }
         return proposals
     }
 
-    fun stripProtocol(text: String): String {
-        if (text.isBlank()) return text
-        return text.replace(Regex("<nexus-action>.*?</nexus-action>", RegexOption.DOT_MATCHES_ALL), "")
-            .trim()
-    }
+    fun stripProtocol(text: String): String = text
+        .replace(Regex("<nexus-action>.*?</nexus-action>", RegexOption.DOT_MATCHES_ALL), "")
+        .trim()
 
     fun encode(action: NexusAction): String = JSONObject().apply {
         put("id", action.id)
         put("type", action.type)
         action.path?.let { put("path", it) }
+        action.destination?.let { put("destination", it) }
+        action.newName?.let { put("newName", it) }
+        action.mimeType?.let { put("mimeType", it) }
         action.content?.let { put("content", it) }
         action.patch?.let { put("patch", it) }
     }.toString()
 
-    fun encodeBatch(actions: List<NexusAction>): String {
-        val array = JSONArray()
-        actions.forEach { action -> array.put(JSONObject(encode(action))) }
-        return array.toString()
-    }
+    fun encodeBatch(actions: List<NexusAction>): String = JSONArray().apply {
+        actions.forEach { put(JSONObject(encode(it))) }
+    }.toString()
 
-    private fun parsePayload(payload: String): NexusActionProposal? {
-        return runCatching {
-            val json = JSONObject(payload)
-            val type = json.optString("type").trim()
-            if (type !in allowedTypes) return null
-            val path = json.optString("path").trim().takeIf { it.isNotBlank() }
-            val content = json.optString("content").takeIf { json.has("content") }
-            val patch = json.optString("patch").takeIf { json.has("patch") }
-            require(type == "open_file" || type == "focus_file" || path != null) { "Action path is required" }
-            require(type != "replace_file" || content != null) { "replace_file requires content" }
-            require(type != "patch_file" || patch != null) { "patch_file requires patch" }
-            NexusActionProposal(
-                id = json.optString("id").takeIf { it.isNotBlank() } ?: UUID.randomUUID().toString(),
-                action = NexusAction(type = type, path = path, content = content, patch = patch)
+    private fun parsePayload(payload: String): NexusActionProposal? = runCatching {
+        val json = JSONObject(payload)
+        val type = json.optString("type").trim()
+        if (type !in allowedTypes) return null
+
+        val path = json.optString("path").trim().takeIf { it.isNotBlank() }
+        val destination = json.optString("destination").trim().takeIf { it.isNotBlank() }
+        val newName = json.optString("newName").trim().takeIf { it.isNotBlank() }
+        val mimeType = json.optString("mimeType").trim().takeIf { it.isNotBlank() }
+        val content = json.optString("content").takeIf { json.has("content") }
+        val patch = json.optString("patch").takeIf { json.has("patch") }
+
+        require(type == "list_files" || path != null) { "$type requires a path" }
+        require(type !in setOf("copy_file", "move_file") || destination != null) { "$type requires destination" }
+        require(type != "rename_file" || newName != null) { "rename_file requires newName" }
+        require(type != "replace_file" || content != null) { "replace_file requires content" }
+        require(type != "patch_file" || patch != null) { "patch_file requires patch" }
+
+        NexusActionProposal(
+            id = json.optString("id").takeIf { it.isNotBlank() } ?: UUID.randomUUID().toString(),
+            action = NexusAction(
+                type = type,
+                path = path,
+                destination = destination,
+                newName = newName,
+                mimeType = mimeType,
+                content = content,
+                patch = patch
             )
-        }.getOrNull()
-    }
+        )
+    }.getOrNull()
 }
 
 data class NexusAction(
     val type: String,
     val path: String? = null,
+    val destination: String? = null,
+    val newName: String? = null,
+    val mimeType: String? = null,
     val content: String? = null,
     val patch: String? = null,
     val id: String = UUID.randomUUID().toString()
@@ -98,8 +121,8 @@ enum class NexusActionStatus {
 
 object NexusActionPolicy {
     fun requiresApproval(action: NexusAction): Boolean = when (action.type) {
-        "open_file", "focus_file", "read_file", "git_diff" -> false
-        "patch_file", "replace_file", "create_file", "delete_file", "rename_file" -> true
+        "list_files", "open_file", "focus_file", "read_file" -> false
+        "patch_file", "replace_file", "create_file", "create_directory", "delete_file", "rename_file", "copy_file", "move_file" -> true
         else -> true
     }
 }
