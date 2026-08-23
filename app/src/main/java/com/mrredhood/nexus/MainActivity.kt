@@ -5,7 +5,7 @@ package com.mrredhood.nexus
 import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
-import androidx.activity.compose.BackHandler
+import androidx.activity.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
@@ -15,18 +15,28 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.dp
 import androidx.documentfile.provider.DocumentFile
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.mrredhood.nexus.core.editor.EditorFontResolver
+import com.mrredhood.nexus.core.editor.EditorInputRules
+import com.mrredhood.nexus.core.editor.LanguageRegistry
+import com.mrredhood.nexus.core.editor.NexusLanguage
+import com.mrredhood.nexus.core.editor.SyntaxHighlighter
 import com.mrredhood.nexus.core.model.NexusProject
+import com.mrredhood.nexus.core.settings.NexusSettings
 import com.mrredhood.nexus.core.workspace.EntryType
 import com.mrredhood.nexus.core.workspace.Workspace
 import com.mrredhood.nexus.core.workspace.WorkspaceEntry
@@ -114,6 +124,8 @@ private fun MissingWorkspaceScreen(project: NexusProject, vm: NexusViewModel, ch
 private fun WorkspaceScreen(project: NexusProject, workspace: Workspace, onBack: () -> Unit) {
     val context = LocalContext.current
     val vm: WorkspaceViewModel = viewModel(factory = WorkspaceViewModelFactory(context))
+    val settingsVm: SettingsViewModel = viewModel()
+    val settings by settingsVm.settings.collectAsStateWithLifecycle()
     val entries by vm.entries.collectAsStateWithLifecycle()
     val currentPath by vm.currentPath.collectAsStateWithLifecycle()
     val loading by vm.loading.collectAsStateWithLifecycle()
@@ -138,7 +150,7 @@ private fun WorkspaceScreen(project: NexusProject, workspace: Workspace, onBack:
     }
 
     if (editorContent != null && editorPath != null) {
-        EditorScreen(editorPath!!, editorContent!!, editorDirty, saving, openDocuments, { path -> vm.read(workspace, path) }, { path -> vm.closeEditor(workspace, path) }, vm::updateEditorContent, { vm.saveEditor(workspace) }, { if (editorDirty) discardDialog = true else vm.clearEditor() })
+        EditorScreen(editorPath!!, editorContent!!, editorDirty, saving, openDocuments, settings, { path -> vm.read(workspace, path) }, { path -> vm.closeEditor(workspace, path) }, vm::updateEditorContent, { vm.saveEditor(workspace) }, { if (editorDirty) discardDialog = true else vm.clearEditor() })
         if (discardDialog) AlertDialog(onDismissRequest = { discardDialog = false }, title = { Text("Unsaved changes") }, text = { Text("This file has unsaved changes. Discard them and close the editor?") }, confirmButton = { FilledTonalButton(onClick = { discardDialog = false; vm.clearEditor() }) { Text("Discard") } }, dismissButton = { TextButton(onClick = { discardDialog = false }) { Text("Keep editing") } })
         return
     }
@@ -161,7 +173,7 @@ private fun WorkspaceScreen(project: NexusProject, workspace: Workspace, onBack:
     nameDialog?.let { action -> NameDialog(action.title, "Rename", { nameDialog = null }, action.entry.name) { name -> vm.rename(workspace, action.entry.relativePath, name); nameDialog = null } }
     destinationDialog?.let { action -> DestinationDialog(action.title, action.entry, { destinationDialog = null }) { destination -> if (action.move) vm.move(workspace, action.entry.relativePath, destination) else vm.copy(workspace, action.entry.relativePath, destination); destinationDialog = null } }
     deleteTarget?.let { entry -> AlertDialog(onDismissRequest = { deleteTarget = null }, title = { Text("Delete ${if (entry.type == EntryType.DIRECTORY) "folder" else "file"}?") }, text = { Text("This permanently deletes ${entry.relativePath}. This action cannot be undone.") }, confirmButton = { FilledTonalButton(onClick = { vm.delete(workspace, entry.relativePath); deleteTarget = null }) { Text("Delete") } }, dismissButton = { TextButton(onClick = { deleteTarget = null }) { Text("Cancel") } }) }
-    error?.let { message -> AlertDialog(onDismissRequest = vm::clearError, title = { Text("Workspace error") }, text = { Text(message) }, confirmButton = { TextButton(onClick = vm::clearError) { Text("OK") } }) }
+    error?.let { message -> AlertDialog(onDismissRequest = vm::clearError, title = { Text("Workspace error") }, text = { Text(message) }, confirmButton = { TextButton(onClick = vm::clearError) { Text("OK") }) }
 }
 
 enum class FileAction { RENAME, COPY, MOVE, DELETE }
@@ -187,23 +199,48 @@ private fun DestinationDialog(title: String, entry: WorkspaceEntry, onDismiss: (
 }
 
 @Composable
-private fun EditorScreen(path: String, content: String, dirty: Boolean, saving: Boolean, documents: List<com.mrredhood.nexus.core.editor.EditorDocument>, onActivate: (String) -> Unit, onClose: (String) -> Unit, onChange: (String) -> Unit, onSave: () -> Unit, onBack: () -> Unit) {
-    Scaffold(topBar = { TopAppBar(title = { Column { Text(path.substringAfterLast('/')); Text(if (dirty) "Unsaved changes" else "Saved", style = MaterialTheme.typography.labelSmall) } }, navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.Outlined.ArrowBack, "Close editor") } }, actions = { IconButton(enabled = dirty && !saving, onClick = onSave) { if (saving) CircularProgressIndicator(modifier = Modifier.padding(4.dp)) else Icon(Icons.Outlined.Save, "Save") } }) }) { padding ->
+private fun EditorScreen(path: String, content: String, dirty: Boolean, saving: Boolean, documents: List<com.mrredhood.nexus.core.editor.EditorDocument>, settings: NexusSettings, onActivate: (String) -> Unit, onClose: (String) -> Unit, onChange: (String) -> Unit, onSave: () -> Unit, onBack: () -> Unit) {
+    val language = remember(path) { LanguageRegistry.detect(path) }
+    var value by remember(path, content) { mutableStateOf(TextFieldValue(content)) }
+    LaunchedEffect(content) {
+        if (content != value.text) value = value.copy(text = content, selection = androidx.compose.ui.text.TextRange(content.length))
+    }
+    val fontFamily = remember(settings.editorFont) { EditorFontResolver.resolve(settings.editorFont) }
+    val highlighted = remember(value.text, language, settings.syntaxHighlighting) { SyntaxHighlighter.highlight(value.text, language, settings.syntaxHighlighting) }
+    val textStyle = MaterialTheme.typography.bodyMedium.copy(fontFamily = fontFamily, fontSize = settings.editorFontSize.sp)
+
+    Scaffold(topBar = { TopAppBar(title = { Column { Text(path.substringAfterLast('/')); Text("${language.displayName} · ${if (dirty) "Unsaved changes" else "Saved"}", style = MaterialTheme.typography.labelSmall) } }, navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.Outlined.ArrowBack, "Close editor") }, actions = { IconButton(enabled = dirty && !saving, onClick = onSave) { if (saving) CircularProgressIndicator(modifier = Modifier.padding(4.dp)) else Icon(Icons.Outlined.Save, "Save") } }) }) { padding ->
         Column(Modifier.fillMaxSize().padding(padding)) {
             if (documents.isNotEmpty()) {
                 Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 8.dp, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     documents.forEach { document ->
                         val active = document.relativePath == path
                         Surface(shape = MaterialTheme.shapes.large, color = if (active) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surfaceContainerHighest) {
-                            Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
-                                TextButton(onClick = { onActivate(document.relativePath) }) { Text((if (document.isDirty) "• " else "") + document.name, maxLines = 1) }
-                                IconButton(onClick = { onClose(document.relativePath) }) { Icon(Icons.Outlined.Close, "Close ${document.name}", modifier = Modifier.size(16.dp)) }
-                            }
+                            Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) { TextButton(onClick = { onActivate(document.relativePath) }) { Text((if (document.isDirty) "• " else "") + document.name, maxLines = 1) }; IconButton(onClick = { onClose(document.relativePath) }) { Icon(Icons.Outlined.Close, "Close ${document.name}", modifier = Modifier.size(16.dp)) } }
                         }
                     }
                 }
             }
-            Card(Modifier.fillMaxSize().padding(10.dp), shape = MaterialTheme.shapes.large) { OutlinedTextField(value = content, onValueChange = onChange, modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()), textStyle = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace), singleLine = false, label = { Text(path) }) }
+            Card(Modifier.fillMaxSize().padding(10.dp), shape = MaterialTheme.shapes.large) {
+                BasicTextField(
+                    value = value,
+                    onValueChange = { next ->
+                        val cursor = next.selection.start
+                        val (fixedText, fixedCursor) = EditorInputRules.transformInput(value.text, next.text, cursor, settings, language)
+                        val fixed = if (fixedText != next.text) next.copy(text = fixedText, selection = androidx.compose.ui.text.TextRange(fixedCursor)) else next
+                        value = fixed
+                        onChange(fixed.text)
+                    },
+                    modifier = Modifier.fillMaxSize().padding(12.dp).verticalScroll(rememberScrollState()),
+                    textStyle = textStyle,
+                    decorationBox = { inner ->
+                        Box {
+                            Text(AnnotatedString(highlighted.text), style = textStyle.copy(color = MaterialTheme.colorScheme.onSurface), modifier = Modifier.fillMaxWidth())
+                            inner()
+                        }
+                    }
+                )
+            }
         }
     }
 }
