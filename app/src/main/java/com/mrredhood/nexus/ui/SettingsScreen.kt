@@ -43,106 +43,107 @@ import com.mrredhood.nexus.core.settings.NexusSettings
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SettingsScreen(
-    settings: NexusSettings,
-    onUpdate: ((NexusSettings) -> NexusSettings) -> Unit,
-    onBack: () -> Unit
-) {
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = { Text("Settings") },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(Icons.Outlined.ArrowBack, "Back")
-                    }
-                }
-            )
-        }
-    ) { padding ->
-        Column(
-            Modifier
-                .fillMaxSize()
-                .padding(padding)
-                .verticalScroll(rememberScrollState())
-                .padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
+fun SettingsScreen(settings: NexusSettings, onUpdate: ((NexusSettings) -> NexusSettings) -> Unit, onBack: () -> Unit) {
+    Scaffold(topBar = { TopAppBar(title = { Text("Settings") }, navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.Outlined.ArrowBack, "Back") } }) }) { padding ->
+        Column(Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             SettingsSection("Appearance", Icons.Outlined.Tune) {
-                ChoiceRow("Theme", settings.theme, listOf("system", "light", "dark", "amoled")) { value -> onUpdate { current -> current.copy(theme = value) } }
-                ChoiceRow("Accent color", settings.accent, listOf("blue", "purple", "cyan", "green", "orange", "red")) { value -> onUpdate { current -> current.copy(accent = value) } }
-                ChoiceRow("UI scale", "${(settings.uiScale * 100).toInt()}%", listOf("80%", "90%", "100%", "110%", "120%", "130%")) { value -> onUpdate { current -> current.copy(uiScale = value.removeSuffix("%").toFloat() / 100f) } }
-                ToggleRow("Compact mode", settings.compactMode) { value -> onUpdate { current -> current.copy(compactMode = value) } }
-                ToggleRow("Fullscreen", settings.fullscreen) { value -> onUpdate { current -> current.copy(fullscreen = value) } }
-                ToggleRow("Immersive coding mode", settings.immersiveCoding) { value -> onUpdate { current -> current.copy(immersiveCoding = value) } }
+                ChoiceRow("Theme", settings.theme, listOf("system", "light", "dark", "amoled")) { v -> onUpdate { it.copy(theme = v) } }
+                ChoiceRow("Accent color", settings.accent, listOf("blue", "purple", "cyan", "green", "orange", "red")) { v -> onUpdate { it.copy(accent = v) } }
+                ChoiceRow("Editor theme", settings.editorTheme, listOf("nexus_dark", "nexus_light", "system")) { v -> onUpdate { it.copy(editorTheme = v) } }
+                ChoiceRow("UI scale", "${(settings.uiScale * 100).toInt()}%", listOf("80%", "90%", "100%", "110%", "120%", "130%")) { v -> onUpdate { it.copy(uiScale = v.removeSuffix("%").toFloat() / 100f) } }
+                ChoiceRow("Animations", settings.animations, listOf("system", "on", "off", "reduced")) { v -> onUpdate { it.copy(animations = v) } }
+                ToggleRow("Compact mode", settings.compactMode) { v -> onUpdate { it.copy(compactMode = v) } }
+                ToggleRow("Fullscreen", settings.fullscreen) { v -> onUpdate { it.copy(fullscreen = v) } }
+                ToggleRow("Immersive coding mode", settings.immersiveCoding) { v -> onUpdate { it.copy(immersiveCoding = v) } }
             }
+
             SettingsSection("Editor", Icons.Outlined.Code) {
-                ChoiceRow("Font", settings.editorFont, listOf("JetBrains Mono", "Roboto Mono", "Fira Code", "Source Code Pro", "Ubuntu Mono", "System Mono")) { value -> onUpdate { current -> current.copy(editorFont = value) } }
-                ChoiceRow("Font size", settings.editorFontSize.toString(), (10..24 step 2).map(Int::toString)) { value -> onUpdate { current -> current.copy(editorFontSize = value.toInt()) } }
-                ChoiceRow("Word wrap", settings.wordWrap, listOf("off", "on", "editor_width", "custom")) { value -> onUpdate { current -> current.copy(wordWrap = value) } }
-                ChoiceRow("Tab size", settings.tabSize.toString(), listOf("2", "4", "8")) { value -> onUpdate { current -> current.copy(tabSize = value.toInt()) } }
-                ToggleRow("Use spaces", settings.useSpaces) { value -> onUpdate { current -> current.copy(useSpaces = value) } }
-                ToggleRow("Auto-indent", settings.autoIndent) { value -> onUpdate { current -> current.copy(autoIndent = value) } }
-                ToggleRow("Auto-close brackets", settings.autoCloseBrackets) { value -> onUpdate { current -> current.copy(autoCloseBrackets = value) } }
-                ToggleRow("Auto-close tags", settings.autoCloseTags) { value -> onUpdate { current -> current.copy(autoCloseTags = value) } }
-                ToggleRow("Auto-rename tags", settings.autoRenameTags) { value -> onUpdate { current -> current.copy(autoRenameTags = value) } }
-                ToggleRow("Syntax highlighting", settings.syntaxHighlighting) { value -> onUpdate { current -> current.copy(syntaxHighlighting = value) } }
-                ToggleRow("Rainbow brackets", settings.rainbowBrackets) { value -> onUpdate { current -> current.copy(rainbowBrackets = value) } }
-                ChoiceRow("Line numbers", settings.lineNumbers, listOf("off", "absolute", "relative")) { value -> onUpdate { current -> current.copy(lineNumbers = value) } }
-                ToggleRow("Current line highlight", settings.currentLineHighlight) { value -> onUpdate { current -> current.copy(currentLineHighlight = value) } }
-                ToggleRow("Indent guides", settings.indentGuides) { value -> onUpdate { current -> current.copy(indentGuides = value) } }
-                ToggleRow("Show whitespace", settings.showWhitespace) { value -> onUpdate { current -> current.copy(showWhitespace = value) } }
-                ToggleRow("Code folding", settings.codeFolding) { value -> onUpdate { current -> current.copy(codeFolding = value) } }
-                ToggleRow("Minimap", settings.minimap) { value -> onUpdate { current -> current.copy(minimap = value) } }
+                ChoiceRow("Font", settings.editorFont, listOf("JetBrains Mono", "Roboto Mono", "Fira Code", "Source Code Pro", "Ubuntu Mono", "System Mono")) { v -> onUpdate { it.copy(editorFont = v) } }
+                ChoiceRow("Font size", settings.editorFontSize.toString(), (10..24 step 2).map(Int::toString)) { v -> onUpdate { it.copy(editorFontSize = v.toInt()) } }
+                ChoiceRow("Line height", settings.lineHeight, listOf("compact", "normal", "comfortable", "spacious")) { v -> onUpdate { it.copy(lineHeight = v) } }
+                ChoiceRow("Word wrap", settings.wordWrap, listOf("off", "on", "editor_width", "custom")) { v -> onUpdate { it.copy(wordWrap = v) } }
+                ChoiceRow("Tab size", settings.tabSize.toString(), listOf("2", "4", "8")) { v -> onUpdate { it.copy(tabSize = v.toInt()) } }
+                ToggleRow("Use spaces", settings.useSpaces) { v -> onUpdate { it.copy(useSpaces = v) } }
+                ToggleRow("Auto-indent", settings.autoIndent) { v -> onUpdate { it.copy(autoIndent = v) } }
+                ToggleRow("Auto-close brackets", settings.autoCloseBrackets) { v -> onUpdate { it.copy(autoCloseBrackets = v) } }
+                ToggleRow("Auto-close tags", settings.autoCloseTags) { v -> onUpdate { it.copy(autoCloseTags = v) } }
+                ToggleRow("Auto-rename tags", settings.autoRenameTags) { v -> onUpdate { it.copy(autoRenameTags = v) } }
+                ToggleRow("Syntax highlighting", settings.syntaxHighlighting) { v -> onUpdate { it.copy(syntaxHighlighting = v) } }
+                ToggleRow("Rainbow brackets", settings.rainbowBrackets) { v -> onUpdate { it.copy(rainbowBrackets = v) } }
+                ToggleRow("Matching bracket highlight", settings.matchingBracketHighlight) { v -> onUpdate { it.copy(matchingBracketHighlight = v) } }
+                ChoiceRow("Line numbers", settings.lineNumbers, listOf("off", "absolute", "relative")) { v -> onUpdate { it.copy(lineNumbers = v) } }
+                ToggleRow("Current line highlight", settings.currentLineHighlight) { v -> onUpdate { it.copy(currentLineHighlight = v) } }
+                ToggleRow("Indent guides", settings.indentGuides) { v -> onUpdate { it.copy(indentGuides = v) } }
+                ToggleRow("Show whitespace", settings.showWhitespace) { v -> onUpdate { it.copy(showWhitespace = v) } }
+                ToggleRow("Code folding", settings.codeFolding) { v -> onUpdate { it.copy(codeFolding = v) } }
+                ToggleRow("Minimap", settings.minimap) { v -> onUpdate { it.copy(minimap = v) } }
             }
+
             SettingsSection("Files & Explorer", Icons.Outlined.Folder) {
-                ChoiceRow("Sort by", settings.explorerSort, listOf("name", "type", "size", "modified", "created")) { value -> onUpdate { current -> current.copy(explorerSort = value) } }
-                ToggleRow("Descending", settings.explorerDescending) { value -> onUpdate { current -> current.copy(explorerDescending = value) } }
-                ToggleRow("Folders first", settings.foldersFirst) { value -> onUpdate { current -> current.copy(foldersFirst = value) } }
-                ChoiceRow("View", settings.explorerView, listOf("list", "compact", "grid")) { value -> onUpdate { current -> current.copy(explorerView = value) } }
-                ToggleRow("Show hidden files", settings.showHiddenFiles) { value -> onUpdate { current -> current.copy(showHiddenFiles = value) } }
-                ToggleRow("Show full path", settings.showFullPath) { value -> onUpdate { current -> current.copy(showFullPath = value) } }
+                ChoiceRow("Sort by", settings.explorerSort, listOf("name", "type", "size", "modified", "created")) { v -> onUpdate { it.copy(explorerSort = v) } }
+                ToggleRow("Descending", settings.explorerDescending) { v -> onUpdate { it.copy(explorerDescending = v) } }
+                ToggleRow("Folders first", settings.foldersFirst) { v -> onUpdate { it.copy(foldersFirst = v) } }
+                ChoiceRow("View", settings.explorerView, listOf("list", "compact", "grid")) { v -> onUpdate { it.copy(explorerView = v) } }
+                ToggleRow("Show hidden files", settings.showHiddenFiles) { v -> onUpdate { it.copy(showHiddenFiles = v) } }
+                ToggleRow("Show full path", settings.showFullPath) { v -> onUpdate { it.copy(showFullPath = v) } }
             }
+
             SettingsSection("Workspace", Icons.Outlined.Memory) {
-                ChoiceRow("AI permission mode", settings.workspacePermission, listOf("restricted", "standard", "full")) { value -> onUpdate { current -> current.copy(workspacePermission = value) } }
-                ChoiceRow("Indexing", settings.indexing, listOf("automatic", "on_open", "manual", "disabled")) { value -> onUpdate { current -> current.copy(indexing = value) } }
-                ChoiceRow("Automatic workspace context", settings.workspaceContext, listOf("never", "smart", "always")) { value -> onUpdate { current -> current.copy(workspaceContext = value) } }
+                ChoiceRow("AI permission mode", settings.workspacePermission, listOf("restricted", "standard", "full")) { v -> onUpdate { it.copy(workspacePermission = v) } }
+                ChoiceRow("Indexing", settings.indexing, listOf("automatic", "on_open", "manual", "disabled")) { v -> onUpdate { it.copy(indexing = v) } }
+                ChoiceRow("Automatic workspace context", settings.workspaceContext, listOf("never", "smart", "always")) { v -> onUpdate { it.copy(workspaceContext = v) } }
+                ChoiceRow("AI completion", settings.aiCompletion, listOf("off", "manual", "automatic")) { v -> onUpdate { it.copy(aiCompletion = v) } }
+                ToggleRow("Format on save", settings.formatOnSave) { v -> onUpdate { it.copy(formatOnSave = v) } }
+                ToggleRow("Diagnostics", settings.diagnostics) { v -> onUpdate { it.copy(diagnostics = v) } }
             }
+
             SettingsSection("AI Context", Icons.Outlined.SmartToy) {
-                ToggleRow("Streaming", settings.aiStreaming) { value -> onUpdate { current -> current.copy(aiStreaming = value) } }
-                ChoiceRow("Maximum context files", settings.maxContextFiles.toString(), listOf("3", "5", "10", "20")) { value -> onUpdate { current -> current.copy(maxContextFiles = value.toInt()) } }
-                ToggleRow("Current file", settings.includeCurrentFile) { value -> onUpdate { current -> current.copy(includeCurrentFile = value) } }
-                ToggleRow("Selection", settings.includeSelection) { value -> onUpdate { current -> current.copy(includeSelection = value) } }
-                ToggleRow("Git diff", settings.includeGitDiff) { value -> onUpdate { current -> current.copy(includeGitDiff = value) } }
-                ToggleRow("Terminal output", settings.includeTerminalContext) { value -> onUpdate { current -> current.copy(includeTerminalContext = value) } }
-                ToggleRow("Workspace summary", settings.includeWorkspaceSummary) { value -> onUpdate { current -> current.copy(includeWorkspaceSummary = value) } }
+                ToggleRow("Streaming", settings.aiStreaming) { v -> onUpdate { it.copy(aiStreaming = v) } }
+                ChoiceRow("Maximum context files", settings.maxContextFiles.toString(), listOf("3", "5", "10", "20")) { v -> onUpdate { it.copy(maxContextFiles = v.toInt()) } }
+                ToggleRow("Current file", settings.includeCurrentFile) { v -> onUpdate { it.copy(includeCurrentFile = v) } }
+                ToggleRow("Selection", settings.includeSelection) { v -> onUpdate { it.copy(includeSelection = v) } }
+                ToggleRow("Git diff", settings.includeGitDiff) { v -> onUpdate { it.copy(includeGitDiff = v) } }
+                ToggleRow("Terminal output", settings.includeTerminalContext) { v -> onUpdate { it.copy(includeTerminalContext = v) } }
+                ToggleRow("Workspace summary", settings.includeWorkspaceSummary) { v -> onUpdate { it.copy(includeWorkspaceSummary = v) } }
+                ChoiceRow("Memory approval", settings.memoryApproval, listOf("always", "ask", "never")) { v -> onUpdate { it.copy(memoryApproval = v) } }
             }
+
             SettingsSection("Agents & Safety", Icons.Outlined.Security) {
-                ChoiceRow("Agent autonomy", settings.agentAutonomy, listOf("ask_every_time", "approve_risky", "autonomous")) { value -> onUpdate { current -> current.copy(agentAutonomy = value) } }
-                ChoiceRow("Maximum parallel agents", settings.maxParallelAgents.toString(), listOf("1", "2", "3", "4", "8")) { value -> onUpdate { current -> current.copy(maxParallelAgents = value.toInt()) } }
-                ToggleRow("Snapshot before AI edit", settings.snapshotBeforeAiEdit) { value -> onUpdate { current -> current.copy(snapshotBeforeAiEdit = value) } }
-                ChoiceRow("Show diff before applying", settings.showDiffBeforeApply, listOf("always", "risky", "never")) { value -> onUpdate { current -> current.copy(showDiffBeforeApply = value) } }
-                ChoiceRow("Auto-apply patches", settings.autoApplyPatches, listOf("never", "approved", "trusted")) { value -> onUpdate { current -> current.copy(autoApplyPatches = value) } }
+                ChoiceRow("Agent autonomy", settings.agentAutonomy, listOf("ask_every_time", "approve_risky", "autonomous")) { v -> onUpdate { it.copy(agentAutonomy = v) } }
+                ChoiceRow("Maximum parallel agents", settings.maxParallelAgents.toString(), listOf("1", "2", "3", "4", "8")) { v -> onUpdate { it.copy(maxParallelAgents = v.toInt()) } }
+                ToggleRow("Snapshot before AI edit", settings.snapshotBeforeAiEdit) { v -> onUpdate { it.copy(snapshotBeforeAiEdit = v) } }
+                ChoiceRow("Show diff before applying", settings.showDiffBeforeApply, listOf("always", "risky", "never")) { v -> onUpdate { it.copy(showDiffBeforeApply = v) } }
+                ChoiceRow("Auto-apply patches", settings.autoApplyPatches, listOf("never", "approved", "trusted")) { v -> onUpdate { it.copy(autoApplyPatches = v) } }
             }
+
             SettingsSection("Terminal", Icons.Outlined.Terminal) {
-                ChoiceRow("Font size", settings.terminalFontSize.toString(), listOf("11", "13", "15", "17")) { value -> onUpdate { current -> current.copy(terminalFontSize = value.toInt()) } }
-                ToggleRow("Confirm terminal close", settings.confirmTerminalClose) { value -> onUpdate { current -> current.copy(confirmTerminalClose = value) } }
+                ChoiceRow("Font size", settings.terminalFontSize.toString(), listOf("11", "13", "15", "17")) { v -> onUpdate { it.copy(terminalFontSize = v.toInt()) } }
+                ChoiceRow("Scrollback lines", settings.terminalScrollback.toString(), listOf("1000", "5000", "10000", "20000")) { v -> onUpdate { it.copy(terminalScrollback = v.toInt()) } }
+                ToggleRow("Confirm terminal close", settings.confirmTerminalClose) { v -> onUpdate { it.copy(confirmTerminalClose = v) } }
             }
+
             SettingsSection("GitHub Actions / CI") {
-                ToggleRow("Automatically analyze CI failures", settings.autoAnalyzeCiFailures) { value -> onUpdate { current -> current.copy(autoAnalyzeCiFailures = value) } }
-                ChoiceRow("Refresh interval", "${settings.ciRefreshSeconds}s", listOf("5s", "10s", "30s", "60s")) { value -> onUpdate { current -> current.copy(ciRefreshSeconds = value.removeSuffix("s").toInt()) } }
+                ToggleRow("Automatically analyze CI failures", settings.autoAnalyzeCiFailures) { v -> onUpdate { it.copy(autoAnalyzeCiFailures = v) } }
+                ChoiceRow("Refresh interval", "${settings.ciRefreshSeconds}s", listOf("5s", "10s", "30s", "60s")) { v -> onUpdate { it.copy(ciRefreshSeconds = v.removeSuffix("s").toInt()) } }
             }
+
             SettingsSection("Projects") {
-                ToggleRow("Remember open files", settings.rememberOpenFiles) { value -> onUpdate { current -> current.copy(rememberOpenFiles = value) } }
-                ToggleRow("Remember cursor position", settings.rememberCursorPosition) { value -> onUpdate { current -> current.copy(rememberCursorPosition = value) } }
-                ToggleRow("Remember Explorer state", settings.rememberExplorerState) { value -> onUpdate { current -> current.copy(rememberExplorerState = value) } }
+                ToggleRow("Remember open files", settings.rememberOpenFiles) { v -> onUpdate { it.copy(rememberOpenFiles = v) } }
+                ToggleRow("Remember cursor position", settings.rememberCursorPosition) { v -> onUpdate { it.copy(rememberCursorPosition = v) } }
+                ToggleRow("Remember Explorer state", settings.rememberExplorerState) { v -> onUpdate { it.copy(rememberExplorerState = v) } }
             }
+
+            SettingsSection("Security") {
+                ToggleRow("App lock", settings.appLock) { v -> onUpdate { it.copy(appLock = v) } }
+            }
+
             Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHighest), modifier = Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(16.dp)) {
                     Text("Build architecture", style = MaterialTheme.typography.titleMedium)
                     Text("Nexus does not manage Android SDK, NDK, JDK, CMake, Flutter SDK, Dart SDK, Gradle installations, or local APK/AAB toolchains. Builds are delegated to GitHub Actions.", style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 6.dp))
                 }
             }
+            Spacer(Modifier.padding(bottom = 12.dp))
         }
     }
 }
@@ -151,10 +152,7 @@ fun SettingsScreen(
 private fun SettingsSection(title: String, icon: androidx.compose.ui.graphics.vector.ImageVector? = null, content: @Composable () -> Unit) {
     Card(Modifier.fillMaxWidth(), shape = MaterialTheme.shapes.large) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                if (icon != null) Icon(icon, null)
-                Text(title, style = MaterialTheme.typography.titleLarge)
-            }
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) { if (icon != null) Icon(icon, null); Text(title, style = MaterialTheme.typography.titleLarge) }
             Spacer(Modifier.padding(2.dp))
             content()
         }
@@ -175,16 +173,9 @@ private fun ChoiceRow(title: String, selected: String, options: List<String>, on
     Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
         Text(title, modifier = Modifier.weight(1f).padding(top = 14.dp))
         Box(modifier = Modifier.weight(1f)) {
-            OutlinedButton(onClick = { expanded = true }, modifier = Modifier.fillMaxWidth()) {
-                Text(selected.replace('_', ' '))
-            }
+            OutlinedButton(onClick = { expanded = true }, modifier = Modifier.fillMaxWidth()) { Text(selected.replace('_', ' ')) }
             DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-                options.forEach { option ->
-                    DropdownMenuItem(text = { Text(option.replace('_', ' ')) }, onClick = {
-                        expanded = false
-                        onSelect(option)
-                    })
-                }
+                options.forEach { option -> DropdownMenuItem(text = { Text(option.replace('_', ' ')) }, onClick = { expanded = false; onSelect(option) }) }
             }
         }
     }
