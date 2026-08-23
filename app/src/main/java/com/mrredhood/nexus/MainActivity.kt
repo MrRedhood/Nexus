@@ -1,3 +1,5 @@
+@file:OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+
 package com.mrredhood.nexus
 
 import android.net.Uri
@@ -47,6 +49,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.documentfile.provider.DocumentFile
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -107,6 +110,7 @@ private fun HomeScreen(
     chooseFolder: ((Uri?) -> Unit) -> Unit,
     onOpen: (String) -> Unit
 ) {
+    val context = LocalContext.current
     var create by remember { mutableStateOf(false) }
     Scaffold(topBar = {
         TopAppBar(title = { Text("Nexus") }, actions = {
@@ -166,10 +170,8 @@ private fun HomeScreen(
             chooseFolder = chooseFolder,
             onDismiss = { create = false },
             onCreate = { name, repository, uri ->
-                if (uri != null) {
-                    val displayName = DocumentFile.fromTreeUri(androidx.compose.ui.platform.LocalContext.current, uri)?.name ?: name
-                    vm.createProject(name, repository, uri, displayName) { create = false }
-                }
+                val displayName = DocumentFile.fromTreeUri(context, uri)?.name ?: name
+                vm.createProject(name, repository, uri, displayName) { create = false }
             }
         )
     }
@@ -181,7 +183,7 @@ private fun CreateProjectDialog(
     onDismiss: () -> Unit,
     onCreate: (String, String?, Uri) -> Unit
 ) {
-    val context = androidx.compose.ui.platform.LocalContext.current
+    val context = LocalContext.current
     var name by remember { mutableStateOf("") }
     var repository by remember { mutableStateOf("") }
     var uri by remember { mutableStateOf<Uri?>(null) }
@@ -209,13 +211,14 @@ private fun CreateProjectDialog(
                 }
             }
         },
-        confirmButton = { FilledTonalButton(enabled = name.isNotBlank() && uri != null, onClick = { onCreate(name.trim(), repository.trim().ifBlank { null }, uri!!) }) { Text("Create") } },
+        confirmButton = { FilledTonalButton(enabled = name.isNotBlank() && uri != null, onClick = { uri?.let { onCreate(name.trim(), repository.trim().ifBlank { null }, it) } }) { Text("Create") } },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
     )
 }
 
 @Composable
 private fun MissingWorkspaceScreen(project: NexusProject, vm: NexusViewModel, chooseFolder: ((Uri?) -> Unit) -> Unit, onBack: () -> Unit) {
+    val context = LocalContext.current
     Scaffold(topBar = { TopAppBar(title = { Text(project.name) }, navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.Outlined.ArrowBack, "Back") } }) }) { padding ->
         Card(Modifier.fillMaxWidth().padding(padding).padding(16.dp), shape = MaterialTheme.shapes.large) {
             Column(Modifier.padding(20.dp)) {
@@ -224,7 +227,7 @@ private fun MissingWorkspaceScreen(project: NexusProject, vm: NexusViewModel, ch
                 FilledTonalButton(onClick = {
                     chooseFolder { uri ->
                         if (uri != null) {
-                            val name = DocumentFile.fromTreeUri(androidx.compose.ui.platform.LocalContext.current, uri)?.name ?: project.name
+                            val name = DocumentFile.fromTreeUri(context, uri)?.name ?: project.name
                             vm.attachWorkspace(project, uri, name)
                         }
                     }
@@ -236,7 +239,7 @@ private fun MissingWorkspaceScreen(project: NexusProject, vm: NexusViewModel, ch
 
 @Composable
 private fun WorkspaceScreen(project: NexusProject, workspace: Workspace, onBack: () -> Unit) {
-    val context = androidx.compose.ui.platform.LocalContext.current
+    val context = LocalContext.current
     val vm: WorkspaceViewModel = viewModel(factory = WorkspaceViewModelFactory(context))
     val entries by vm.entries.collectAsStateWithLifecycle()
     val currentPath by vm.currentPath.collectAsStateWithLifecycle()
@@ -279,7 +282,7 @@ private fun WorkspaceScreen(project: NexusProject, workspace: Workspace, onBack:
             title = if (type == "folder") "New folder" else "New file",
             onDismiss = { createDialog = null },
             onConfirm = { name ->
-                if (type == "folder") vm.createDirectory(workspace, joinPath(currentPath, name)) else vm.createFile(workspace, joinPath(currentPath, name))
+                if (type == "folder") vm.createDirectory(workspace, name) else vm.createFile(workspace, name)
                 createDialog = null
             }
         )
@@ -311,8 +314,6 @@ private fun NameDialog(title: String, onDismiss: () -> Unit, onConfirm: (String)
     var value by remember { mutableStateOf("") }
     AlertDialog(onDismissRequest = onDismiss, title = { Text(title) }, text = { OutlinedTextField(value, { value = it }, label = { Text("Name") }, singleLine = true) }, confirmButton = { FilledTonalButton(enabled = value.trim().isNotEmpty(), onClick = { onConfirm(value.trim()) }) { Text("Create") } }, dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } })
 }
-
-private fun joinPath(parent: String, child: String): String = if (parent.isBlank()) child else "$parent/${child.trimStart('/')}"
 
 private fun formatBytes(value: Long): String = when {
     value < 1024 -> "$value B"
