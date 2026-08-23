@@ -12,117 +12,105 @@ import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
 
-/** Executes the configured AI provider without bundling a provider SDK. */
+/** Provider runtime for buffered and incremental AI responses. */
 class AiProviderService(context: Context) {
-    private val appContext = context.applicationContext
-    private val settingsRepository = AdvancedSettingsRepository(appContext)
-    private val apiKeys = ApiKeyStore(appContext)
+    private val settings = AdvancedSettingsRepository(context.applicationContext)
+    private val keys = ApiKeyStore(context.applicationContext)
 
     suspend fun complete(request: AiRequest): ProviderResult = withContext(Dispatchers.IO) {
-        val settings = settingsRepository.settings.first()
-        val provider = settings.provider.trim()
-        val apiKey = apiKeys.get(provider)
-            ?: return@withContext ProviderResult(false, "No API key configured for $provider.")
-        val model = resolveModel(provider, request.model, settings.model)
-        if (model.isBlank()) return@withContext ProviderResult(false, "No model configured for $provider.")
-
-        runCatching {
-            if (provider.equals("Gemini", ignoreCase = true)) {
-                completeGemini(apiKey, model, request)
-            } else {
-                completeOpenAiCompatible(provider, apiKey, model, request, settings.endpoint)
-            }
-        }.getOrElse { error -> ProviderResult(false, error.message ?: "AI request failed.") }
+        execute(request, false) { }
     }
 
-    suspend fun testConnection(): ProviderResult {
-        val settings = settingsRepository.settings.first()
-        val model = resolveModel(settings.provider, "", settings.model)
-        return complete(AiRequest(listOf(AiMessage("user", "Reply with exactly: Nexus connection OK")), model, 0.0, 32, false))
+    suspend fun stream(request: AiRequest, onDelta: suspend (String) -> Unit): ProviderResult = withContext(Dispatchers.IO) {
+        execute(request, true, onDelta)
     }
 
-    private fun completeGemini(apiKey: String, model: String, request: AiRequest): ProviderResult {
-        val endpoint = "https://generativelanguage.googleapis.com/v1beta/models/${encodePath(model)}:generateContent?key=${urlEncode(apiKey)}"
-        val contents = JSONArray()
-        request.messages.forEach { message ->
-            contents.put(JSONObject().apply {
-                put("role", if (message.role == "assistant") "model" else "user")
-                put("parts", JSONArray().put(JSONObject().put("text", message.content)))
-            })
-        }
+    private suspend fun execute(request: AiRequest, streaming: Boolean, onDelta: suspend (String) -> Unit): ProviderResult {
+        val config = settings.settings.first()
+        val provider = config.provider.trim()
+        val key = keys.get(provider) ?: return ProviderResult(false, "No API key configured for $provider.")
+        val model = resolveModel(provider, request.model, config.model)
+        if (model.isBlank()) return ProviderResult(false, "No model configured for $provider.")
+        return runCatching {
+            if (provider.equals("Gemini", true)) gemini(key, model, request, streaming, onDelta)
+            else openAi(provider, key, model, request, config.endpoint, streaming, onDelta)
+        }.getOrElse { ProviderResult(false, it.message ?: "AI request failed.") }
+    }
+
+    private suspend fun gemini(key: String, model: String, request: AiRequest, streaming: Boolean, onDelta: suspend (String) -> Unit): ProviderResult {
+        val action = if (streaming) "streamGenerateContent?alt=sse" else "generateContent"
+        val url = "https://generativelanguage.googleapis.com/v1beta/models/${encode(model)}:$action&key=${encode(key)}".replace("generateContent&key", "generateContent?key")
         val body = JSONObject().apply {
-            put("contents", contents)
-            put("generationConfig", JSONObject().apply {
-                put("temperature", request.temperature)
-                put("maxOutputTokens", request.maxOutputTokens)
-            })
+            put("contents", JSONArray().also { a -> request.messages.filter { it.role != "system" }.forEach { m -> a.put(JSONObject().put("role", if (m.role == "assistant") "model" else "user").put("parts", JSONArray().put(JSONObject().put("text", m.content)))) } })
+            request.messages.firstOrNull { it.role == "system" }?.let { put("systemInstruction", JSONObject().put("parts", JSONArray().put(JSONObject().put("text", it.content)))) }
+            put("generationConfig", JSONObject().put("temperature", request.temperature).put("maxOutputTokens", request.maxOutputTokens))
         }
-        val json = post(endpoint, body.toString(), null)
-        val text = json.optJSONArray("candidates")?.optJSONObject(0)?.optJSONObject("content")?.optJSONArray("parts")?.optJSONObject(0)?.optString("text").orEmpty()
-        if (text.isBlank()) return ProviderResult(false, "Gemini returned an empty response.")
-        val usage = json.optJSONObject("usageMetadata")
-        return ProviderResult(true, text, AiResponse(text, model, "Gemini", usage?.optIntOrNull("promptTokenCount"), usage?.optIntOrNull("candidatesTokenCount")))
+        return readResponse(url, body.toString(), null, streaming, "Gemini", model, onDelta) { json ->
+            json.optJSONArray("candidates")?.optJSONObject(0)?.optJSONObject("content")?.optJSONArray("parts")?.optJSONObject(0)?.optString("text").orEmpty()
+        }
     }
 
-    private fun completeOpenAiCompatible(provider: String, apiKey: String, model: String, request: AiRequest, configuredEndpoint: String): ProviderResult {
-        val endpoint = configuredEndpoint.trim().ifBlank { defaultEndpoint(provider) }
+    private suspend fun openAi(provider: String, key: String, model: String, request: AiRequest, configuredEndpoint: String, streaming: Boolean, onDelta: suspend (String) -> Unit): ProviderResult {
+        val endpoint = configuredEndpoint.trim().ifBlank { when {
+            provider.equals("OpenRouter", true) -> "https://openrouter.ai/api/v1/chat/completions"
+            provider.equals("DeepInfra", true) -> "https://api.deepinfra.com/v1/openai/chat/completions"
+            provider.equals("LiteLLM", true) -> "http://localhost:4000/v1/chat/completions"
+            else -> ""
+        } }
         require(endpoint.isNotBlank()) { "No endpoint configured for $provider." }
-        val messages = JSONArray()
-        request.messages.forEach { messages.put(JSONObject().put("role", it.role).put("content", it.content)) }
         val body = JSONObject().apply {
             put("model", model)
-            put("messages", messages)
-            put("temperature", request.temperature)
-            put("max_tokens", request.maxOutputTokens)
-            put("stream", false)
+            put("messages", JSONArray().also { a -> request.messages.forEach { a.put(JSONObject().put("role", it.role).put("content", it.content)) } })
+            put("temperature", request.temperature); put("max_tokens", request.maxOutputTokens); put("stream", streaming)
         }
-        val json = post(endpoint, body.toString(), "Bearer $apiKey")
-        val text = json.optJSONArray("choices")?.optJSONObject(0)?.optJSONObject("message")?.optString("content").orEmpty()
-        if (text.isBlank()) return ProviderResult(false, "$provider returned an empty response.")
-        val usage = json.optJSONObject("usage")
-        return ProviderResult(true, text, AiResponse(text, model, provider, usage?.optIntOrNull("prompt_tokens"), usage?.optIntOrNull("completion_tokens")))
-    }
-
-    private fun post(endpoint: String, body: String, authorization: String?): JSONObject {
-        val connection = (URL(endpoint).openConnection() as HttpURLConnection).apply {
-            requestMethod = "POST"
-            connectTimeout = 20_000
-            readTimeout = 120_000
-            doOutput = true
-            setRequestProperty("Content-Type", "application/json")
-            setRequestProperty("Accept", "application/json")
-            authorization?.let { setRequestProperty("Authorization", it) }
-        }
-        return try {
-            connection.outputStream.use { it.write(body.toByteArray(Charsets.UTF_8)) }
-            val status = connection.responseCode
-            val stream = if (status in 200..299) connection.inputStream else connection.errorStream
-            val response = stream?.bufferedReader()?.use { it.readText() }.orEmpty()
-            val json = runCatching { JSONObject(response) }.getOrElse { JSONObject().put("error", JSONObject().put("message", response)) }
-            if (status !in 200..299) throw IllegalStateException("HTTP $status: ${json.optJSONObject("error")?.optString("message") ?: response}")
-            json
-        } finally { connection.disconnect() }
-    }
-
-    private fun resolveModel(provider: String, requested: String, configured: String): String {
-        if (requested.isNotBlank() && requested != "default") return requested
-        if (configured.isNotBlank() && configured != "default") return configured
-        return when {
-            provider.equals("Gemini", true) -> "gemini-2.5-flash"
-            provider.equals("OpenRouter", true) -> "google/gemini-2.5-flash"
-            provider.equals("DeepInfra", true) -> "meta-llama/Llama-3.3-70B-Instruct"
-            else -> ""
+        return readResponse(endpoint, body.toString(), "Bearer $key", streaming, provider, model, onDelta) { json ->
+            if (streaming) json.optJSONArray("choices")?.optJSONObject(0)?.optJSONObject("delta")?.optString("content").orEmpty()
+            else json.optJSONArray("choices")?.optJSONObject(0)?.optJSONObject("message")?.optString("content").orEmpty()
         }
     }
 
-    private fun defaultEndpoint(provider: String): String = when {
-        provider.equals("OpenRouter", true) -> "https://openrouter.ai/api/v1/chat/completions"
-        provider.equals("DeepInfra", true) -> "https://api.deepinfra.com/v1/openai/chat/completions"
-        provider.equals("LiteLLM", true) -> "http://localhost:4000/v1/chat/completions"
+    private suspend fun readResponse(endpoint: String, body: String, auth: String?, streaming: Boolean, provider: String, model: String, onDelta: suspend (String) -> Unit, extract: (JSONObject) -> String): ProviderResult {
+        val c = (URL(endpoint).openConnection() as HttpURLConnection).apply {
+            requestMethod = "POST"; connectTimeout = 20_000; readTimeout = 120_000; doOutput = true
+            setRequestProperty("Content-Type", "application/json"); setRequestProperty("Accept", if (streaming) "text/event-stream" else "application/json")
+            auth?.let { setRequestProperty("Authorization", it) }
+        }
+        val text = StringBuilder()
+        try {
+            c.outputStream.use { it.write(body.toByteArray(Charsets.UTF_8)) }
+            val status = c.responseCode
+            if (status !in 200..299) {
+                val error = (c.errorStream ?: c.inputStream).bufferedReader().use { it.readText() }
+                throw IllegalStateException("HTTP $status: $error")
+            }
+            if (streaming) {
+                c.inputStream.bufferedReader().useLines { lines ->
+                    lines.forEach { line ->
+                        if (!line.startsWith("data:")) return@forEach
+                        val data = line.removePrefix("data:").trim()
+                        if (data.isBlank() || data == "[DONE]") return@forEach
+                        val delta = runCatching { extract(JSONObject(data)) }.getOrDefault("")
+                        if (delta.isNotEmpty()) { text.append(delta); onDelta(delta) }
+                    }
+                }
+            } else {
+                val json = JSONObject(c.inputStream.bufferedReader().use { it.readText() })
+                text.append(extract(json))
+                val usage = json.optJSONObject("usage") ?: json.optJSONObject("usageMetadata")
+                return ProviderResult(true, text.toString(), AiResponse(text.toString(), model, provider, usage?.optIntOrNull("prompt_tokens", "promptTokenCount"), usage?.optIntOrNull("completion_tokens", "candidatesTokenCount")))
+            }
+            return ProviderResult(true, text.toString(), AiResponse(text.toString(), model, provider))
+        } finally { c.disconnect() }
+    }
+
+    private fun resolveModel(provider: String, requested: String, configured: String) = when {
+        requested.isNotBlank() && requested != "default" -> requested
+        configured.isNotBlank() && configured != "default" -> configured
+        provider.equals("Gemini", true) -> "gemini-2.5-flash"
+        provider.equals("OpenRouter", true) -> "google/gemini-2.5-flash"
+        provider.equals("DeepInfra", true) -> "meta-llama/Llama-3.3-70B-Instruct"
         else -> ""
     }
-
-    private fun encodePath(value: String) = URLEncoder.encode(value, Charsets.UTF_8.name()).replace("+", "%20")
-    private fun urlEncode(value: String) = URLEncoder.encode(value, Charsets.UTF_8.name())
-    private fun JSONObject.optIntOrNull(name: String): Int? = if (has(name) && !isNull(name)) optInt(name) else null
+    private fun encode(v: String) = URLEncoder.encode(v, Charsets.UTF_8.name()).replace("+", "%20")
+    private fun JSONObject.optIntOrNull(vararg names: String): Int? = names.firstOrNull { has(it) && !isNull(it) }?.let { optInt(it) }
 }
