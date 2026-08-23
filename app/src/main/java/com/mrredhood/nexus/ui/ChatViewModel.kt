@@ -10,6 +10,9 @@ import com.mrredhood.nexus.core.ai.ChatContext
 import com.mrredhood.nexus.core.ai.ChatContextBuilder
 import com.mrredhood.nexus.core.ai.ChatMessage
 import com.mrredhood.nexus.core.ai.ChatRepository
+import com.mrredhood.nexus.core.ai.NexusActionPolicy
+import com.mrredhood.nexus.core.ai.NexusActionProposal
+import com.mrredhood.nexus.core.ai.NexusActionProtocol
 import com.mrredhood.nexus.core.settings.NexusSettingsRuntime
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
@@ -33,12 +36,15 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     val error: StateFlow<String?> = _error.asStateFlow()
     private val _tokenUsage = MutableStateFlow(TokenUsage())
     val tokenUsage: StateFlow<TokenUsage> = _tokenUsage.asStateFlow()
+    private val _actionProposals = MutableStateFlow<List<NexusActionProposal>>(emptyList())
+    val actionProposals: StateFlow<List<NexusActionProposal>> = _actionProposals.asStateFlow()
 
     fun open(workspaceId: String) {
         if (this.workspaceId == workspaceId) return
         stop()
         this.workspaceId = workspaceId
         _messages.value = repository.load(workspaceId)
+        _actionProposals.value = NexusActionProtocol.extract(_messages.value.lastOrNull { it.role == "assistant" }?.content.orEmpty())
         _error.value = null
         _tokenUsage.value = TokenUsage()
     }
@@ -51,6 +57,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         generationJob?.cancel()
         generationJob = viewModelScope.launch {
             _error.value = null
+            _actionProposals.value = emptyList()
             val settings = NexusSettingsRuntime.current()
             val history = _messages.value + ChatMessage("user", prompt)
             val system = contextBuilder.build(context)
@@ -96,6 +103,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                     }
                     _messages.value = current
                     repository.save(id, current)
+                    _actionProposals.value = NexusActionProtocol.extract(finalText)
                     _tokenUsage.value = TokenUsage(
                         input = response?.inputTokens ?: estimateTokens(system + history.joinToString { it.content }),
                         output = response?.outputTokens ?: estimateTokens(finalText)
@@ -105,6 +113,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 val current = _messages.value
                 if (current.lastOrNull()?.role == "assistant" && current.last().content.isNotBlank()) {
                     repository.save(id, current)
+                    _actionProposals.value = NexusActionProtocol.extract(current.last().content)
                 } else {
                     repository.save(id, history)
                 }
@@ -129,11 +138,25 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         stop()
         workspaceId?.let(repository::clear)
         _messages.value = emptyList()
+        _actionProposals.value = emptyList()
         _error.value = null
         _tokenUsage.value = TokenUsage()
     }
 
     fun clearError() { _error.value = null }
+
+    fun rejectAction(id: String) {
+        _actionProposals.value = _actionProposals.value.map { proposal ->
+            if (proposal.id == id) proposal.copy(status = com.mrredhood.nexus.core.ai.NexusActionStatus.REJECTED) else proposal
+        }
+    }
+
+    fun approveAction(id: String) {
+        _actionProposals.value = _actionProposals.value.map { proposal ->
+            if (proposal.id == id && !NexusActionPolicy.requiresApproval(proposal.action)) proposal.copy(status = com.mrredhood.nexus.core.ai.NexusActionStatus.APPROVED)
+            else proposal
+        }
+    }
 
     private fun estimateTokens(text: String): Int = (text.length + 3) / 4
 
