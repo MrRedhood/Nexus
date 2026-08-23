@@ -57,12 +57,17 @@ class NexusActionExecutor(private val fileSystem: WorkspaceFileSystem) {
         var offset = 0
         var cursor = 0
         for (hunkIndex in hunks.indices) {
-            val headerIndex = patchLines.indexOf(hunks[hunkIndex], cursor)
             val header = hunks[hunkIndex]
+            val headerIndex = patchLines.indexOf(header, cursor)
+            require(headerIndex >= 0) { "Unable to locate unified diff hunk" }
             val match = Regex("@@ -(\\d+)(?:,(\\d+))? \\+(\\d+)(?:,(\\d+))? @@").find(header)
                 ?: error("Invalid unified diff hunk: $header")
             val oldStart = match.groupValues[1].toInt() - 1 + offset
-            val nextHeader = if (hunkIndex + 1 < hunks.size) patchLines.indexOf(hunks[hunkIndex + 1], headerIndex + 1) else patchLines.size
+            val nextHeader = if (hunkIndex + 1 < hunks.size) {
+                patchLines.indexOf(hunks[hunkIndex + 1], headerIndex + 1).takeIf { it >= 0 } ?: patchLines.size
+            } else {
+                patchLines.size
+            }
             var sourceIndex = oldStart
             val replacement = mutableListOf<String>()
             for (line in patchLines.subList(headerIndex + 1, nextHeader)) {
