@@ -3,6 +3,11 @@ package com.mrredhood.nexus.ui
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.mrredhood.nexus.core.ai.AIContextItem
+import com.mrredhood.nexus.core.ai.AIContextOptions
+import com.mrredhood.nexus.core.ai.AIContextService
+import com.mrredhood.nexus.core.ai.AIContextSnapshot
+import com.mrredhood.nexus.core.ai.AIContextSource
 import com.mrredhood.nexus.core.ai.AiMessage
 import com.mrredhood.nexus.core.ai.AiProviderService
 import com.mrredhood.nexus.core.ai.AiRequest
@@ -31,6 +36,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     private val repository = ChatRepository(application.applicationContext)
     private val provider = AiProviderService(application.applicationContext)
     private val contextBuilder = ChatContextBuilder()
+    private val contextService = AIContextService()
     private val actionExecutor = NexusActionExecutor(WorkspaceFileSystem(application.applicationContext))
     private var workspaceId: String? = null
     private var workspace: Workspace? = null
@@ -44,6 +50,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     val error: StateFlow<String?> = _error.asStateFlow()
     private val _tokenUsage = MutableStateFlow(TokenUsage())
     val tokenUsage: StateFlow<TokenUsage> = _tokenUsage.asStateFlow()
+    private val _contextSnapshot = MutableStateFlow<AIContextSnapshot?>(null)
+    val contextSnapshot: StateFlow<AIContextSnapshot?> = _contextSnapshot.asStateFlow()
     private val _actionProposals = MutableStateFlow<List<NexusActionProposal>>(emptyList())
     val actionProposals: StateFlow<List<NexusActionProposal>> = _actionProposals.asStateFlow()
     private val _actionReviews = MutableStateFlow<Map<String, NexusActionReview>>(emptyMap())
@@ -64,7 +72,44 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         _error.value = null
         _actionMessage.value = null
         _tokenUsage.value = TokenUsage()
+        _contextSnapshot.value = null
     }
+
+    fun inspectContext(userMessage: String, context: ChatContext) {
+        val settings = NexusSettingsRuntime.current()
+        val request = com.mrredhood.nexus.core.ai.AIContextRequest(
+            userMessage = userMessage,
+            currentFile = context.currentFile?.let { contextItem(AIContextSource.CURRENT_FILE, "Current file", it) },
+            selection = context.selection?.let { contextItem(AIContextSource.SELECTION, "Selected code", it) },
+            gitDiff = context.gitDiff?.let { contextItem(AIContextSource.GIT_DIFF, "Current changes", it) },
+            terminalOutput = context.terminalOutput?.let { contextItem(AIContextSource.TERMINAL_OUTPUT, "Recent terminal output", it) },
+            workspaceSummary = context.workspaceSummary?.let { contextItem(AIContextSource.WORKSPACE_SUMMARY, "Workspace summary", it) }
+        )
+        val automaticMode = when (settings.workspaceContext.lowercase()) {
+            "never", "off", "disabled" -> com.mrredhood.nexus.core.ai.AutomaticContextMode.NEVER
+            "always" -> com.mrredhood.nexus.core.ai.AutomaticContextMode.ALWAYS
+            else -> com.mrredhood.nexus.core.ai.AutomaticContextMode.SMART
+        }
+        _contextSnapshot.value = contextService.assemble(
+            request,
+            AIContextOptions(
+                automaticContext = automaticMode,
+                maxRelatedFiles = settings.maxContextFiles.coerceIn(0, 50),
+                includeCurrentFile = settings.includeCurrentFile,
+                includeSelection = settings.includeSelection,
+                includeGitDiff = settings.includeGitDiff,
+                includeTerminalOutput = settings.includeTerminalContext,
+                includeWorkspaceSummary = settings.includeWorkspaceSummary
+            )
+        )
+    }
+
+    private fun contextItem(source: AIContextSource, label: String, content: String) = AIContextItem(
+        source = source,
+        label = label,
+        content = content,
+        estimatedTokens = AIContextService.estimateTokens(content)
+    )
 
     private fun previewMutatingActions(proposals: List<NexusActionProposal>, targetWorkspace: Workspace) {
         viewModelScope.launch {
@@ -88,6 +133,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             _actionMessage.value = null
             _actionProposals.value = emptyList()
             _actionReviews.value = emptyMap()
+            inspectContext(prompt, context)
             val settings = NexusSettingsRuntime.current()
             val history = _messages.value + ChatMessage("user", prompt)
             val system = contextBuilder.build(context)
@@ -161,6 +207,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         _actionMessage.value = null
         _error.value = null
         _tokenUsage.value = TokenUsage()
+        _contextSnapshot.value = null
     }
 
     fun clearError() { _error.value = null }
