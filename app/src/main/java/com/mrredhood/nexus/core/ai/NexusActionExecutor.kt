@@ -1,69 +1,119 @@
 package com.mrredhood.nexus.core.ai
 
+import com.mrredhood.nexus.core.workspace.EntryType
 import com.mrredhood.nexus.core.workspace.Workspace
 import com.mrredhood.nexus.core.workspace.WorkspaceFileSystem
 
-/** Executes approved Nexus file actions against the active workspace. */
+/** Executes approved Nexus actions against the active workspace. */
 class NexusActionExecutor(private val fileSystem: WorkspaceFileSystem) {
     suspend fun preview(workspace: Workspace, proposal: NexusActionProposal): NexusActionReview? {
         val action = proposal.action
         if (!NexusActionPolicy.requiresApproval(action)) return null
-        val path = requirePath(action)
-        val current = fileSystem.read(workspace, path)
-        val proposed = when (action.type) {
-            "replace_file" -> action.content ?: error("replace_file requires content")
-            "patch_file" -> {
-                val patch = action.patch ?: error("patch_file requires patch")
-                applyUnifiedPatch(current.content, patch)
+        val path = action.path?.trim().orEmpty()
+        return when (action.type) {
+            "replace_file" -> {
+                val current = fileSystem.read(workspace, requirePath(action))
+                val proposed = action.content ?: error("replace_file requires content")
+                NexusDiffBuilder.build(proposal.id, path, current.content, proposed)
             }
-            else -> return null
+            "patch_file" -> {
+                val current = fileSystem.read(workspace, requirePath(action))
+                val patch = action.patch ?: error("patch_file requires patch")
+                NexusDiffBuilder.build(proposal.id, path, current.content, applyUnifiedPatch(current.content, patch))
+            }
+            "delete_file" -> {
+                val current = fileSystem.read(workspace, requirePath(action))
+                NexusDiffBuilder.build(proposal.id, path, current.content, "")
+            }
+            else -> null
         }
-        return NexusDiffBuilder.build(proposal.id, path, current.content, proposed)
     }
 
-    suspend fun execute(workspace: Workspace, action: NexusAction): ActionExecutionResult {
-        return runCatching {
-            when (action.type) {
-                "read_file" -> {
-                    val path = requirePath(action)
-                    val file = fileSystem.read(workspace, path)
-                    ActionExecutionResult(true, "Read $path", file.content)
+    suspend fun execute(workspace: Workspace, action: NexusAction): ActionExecutionResult = runCatching {
+        when (action.type) {
+            "list_files" -> {
+                val directory = action.path?.trim().orEmpty()
+                val entries = fileSystem.list(workspace, directory)
+                val output = entries.joinToString("\n") {
+                    "${if (it.type == EntryType.DIRECTORY) "DIR " else "FILE"} ${it.relativePath} (${it.sizeBytes} bytes)"
                 }
-                "replace_file" -> {
-                    val path = requirePath(action)
-                    val content = action.content ?: error("replace_file requires content")
-                    fileSystem.write(workspace, path, content)
-                    ActionExecutionResult(true, "Updated $path")
-                }
-                "patch_file" -> {
-                    val path = requirePath(action)
-                    val patch = action.patch ?: error("patch_file requires patch")
-                    val current = fileSystem.read(workspace, path)
-                    val updated = applyUnifiedPatch(current.content, patch)
-                    fileSystem.writeIfUnchanged(workspace, path, updated, current.mimeType ?: "text/plain", current.sizeBytes, current.lastModified)
-                    ActionExecutionResult(true, "Patched $path")
-                }
-                "open_file", "focus_file" -> {
-                    val path = requirePath(action)
-                    require(fileSystem.exists(workspace, path)) { "File not found: $path" }
-                    ActionExecutionResult(true, "${action.type} requested for $path")
-                }
-                else -> ActionExecutionResult(false, "Unsupported action: ${action.type}")
+                ActionExecutionResult(true, "Listed ${entries.size} entries", output)
             }
-        }.getOrElse { ActionExecutionResult(false, it.message ?: "Action failed") }
-    }
+            "read_file" -> {
+                val path = requirePath(action)
+                val file = fileSystem.read(workspace, path)
+                ActionExecutionResult(true, "Read $path", file.content)
+            }
+            "open_file", "focus_file" -> {
+                val path = requirePath(action)
+                require(fileSystem.exists(workspace, path)) { "File not found: $path" }
+                ActionExecutionResult(true, "${action.type} requested for $path")
+            }
+            "create_file" -> {
+                val path = requirePath(action)
+                val file = fileSystem.write(workspace, path, action.content.orEmpty(), action.mimeType ?: "text/plain")
+                ActionExecutionResult(true, "Created $path", file.content)
+            }
+            "create_directory" -> {
+                val path = requirePath(action)
+                fileSystem.createDirectory(workspace, path)
+                ActionExecutionResult(true, "Created directory $path")
+            }
+            "replace_file" -> {
+                val path = requirePath(action)
+                val content = action.content ?: error("replace_file requires content")
+                val file = fileSystem.write(workspace, path, content)
+                ActionExecutionResult(true, "Updated $path", file.content)
+            }
+            "patch_file" -> {
+                val path = requirePath(action)
+                val patch = action.patch ?: error("patch_file requires patch")
+                val current = fileSystem.read(workspace, path)
+                val updated = applyUnifiedPatch(current.content, patch)
+                val file = fileSystem.writeIfUnchanged(workspace, path, updated, current.mimeType ?: "text/plain", current.sizeBytes, current.lastModified)
+                ActionExecutionResult(true, "Patched $path", file.content)
+            }
+            "delete_file" -> {
+                val path = requirePath(action)
+                fileSystem.delete(workspace, path)
+                ActionExecutionResult(true, "Deleted $path")
+            }
+            "rename_file" -> {
+                val path = requirePath(action)
+                val newName = action.newName?.trim().orEmpty()
+                require(newName.isNotBlank()) { "rename_file requires newName" }
+                val result = fileSystem.rename(workspace, path, newName)
+                ActionExecutionResult(true, "Renamed $path to ${result.relativePath}")
+            }
+            "copy_file" -> {
+                val source = requirePath(action)
+                val destination = requireDestination(action)
+                fileSystem.copy(workspace, source, destination)
+                ActionExecutionResult(true, "Copied $source to $destination")
+            }
+            "move_file" -> {
+                val source = requirePath(action)
+                val destination = requireDestination(action)
+                fileSystem.move(workspace, source, destination)
+                ActionExecutionResult(true, "Moved $source to $destination")
+            }
+            else -> ActionExecutionResult(false, "Unsupported action: ${action.type}")
+        }
+    }.getOrElse { ActionExecutionResult(false, it.message ?: "Action failed") }
 
     private fun requirePath(action: NexusAction): String = action.path?.trim()?.takeIf { it.isNotEmpty() }
-        ?: error("${action.type} requires a file path")
+        ?: error("${action.type} requires a file or directory path")
+
+    private fun requireDestination(action: NexusAction): String = action.destination?.trim()?.takeIf { it.isNotEmpty() }
+        ?: error("${action.type} requires destination")
 
     private fun indexOfFrom(lines: List<String>, element: String, startIndex: Int): Int {
-        val start = startIndex.coerceAtLeast(0)
-        for (index in start until lines.size) if (lines[index] == element) return index
+        for (index in startIndex.coerceAtLeast(0) until lines.size) if (lines[index] == element) return index
         return -1
     }
 
     private fun applyUnifiedPatch(original: String, patch: String): String {
-        val originalLines = original.split("\n").toMutableList()
+        val originalLines = original.replace("\r\n", "\n").split("\n").toMutableList()
         val patchLines = patch.replace("\r\n", "\n").split("\n")
         val hunks = patchLines.filter { it.startsWith("@@") }
         require(hunks.isNotEmpty()) { "patch_file requires a unified diff with at least one hunk" }
