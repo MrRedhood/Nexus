@@ -9,6 +9,7 @@ import com.mrredhood.nexus.core.editor.EditorDocumentManager
 import com.mrredhood.nexus.core.editor.EditorDocumentState
 import com.mrredhood.nexus.core.editor.EditorViewState
 import com.mrredhood.nexus.core.editor.EditorTabManager
+import com.mrredhood.nexus.core.settings.NexusSettingsRuntime
 import com.mrredhood.nexus.core.workspace.Workspace
 import com.mrredhood.nexus.core.workspace.WorkspaceEntry
 import com.mrredhood.nexus.core.workspace.WorkspaceFile
@@ -16,6 +17,7 @@ import com.mrredhood.nexus.core.workspace.WorkspaceFileSystem
 import com.mrredhood.nexus.core.workspace.WorkspaceSearch
 import com.mrredhood.nexus.core.workspace.WorkspaceSearchOptions
 import com.mrredhood.nexus.core.workspace.WorkspaceSearchResult
+import com.mrredhood.nexus.core.workspace.WorkspaceSettingsPolicy
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -50,8 +52,14 @@ class WorkspaceViewModel(context: Context) : ViewModel() {
     private val _searching = MutableStateFlow(false); val searching: StateFlow<Boolean> = _searching.asStateFlow()
     private val _searchQuery = MutableStateFlow(""); val searchQuery: StateFlow<String> = _searchQuery.asStateFlow()
 
+    init {
+        NexusSettingsRuntime.initialize(context.applicationContext)
+    }
+
     fun open(workspace: Workspace) {
-        navigationJob?.cancel(); _currentPath.value = ""; _navigationStack.value = emptyList(); _recentPaths.value = emptyList(); openedWorkspaceId = workspace.id; clearEditorState(); load(workspace, "", emptyList()); restoreOpenTabs(workspace)
+        navigationJob?.cancel(); _currentPath.value = ""; _navigationStack.value = emptyList(); _recentPaths.value = emptyList(); openedWorkspaceId = workspace.id; clearEditorState(); load(workspace, "", emptyList());
+        if (NexusSettingsRuntime.current().rememberOpenFiles) restoreOpenTabs(workspace)
+        else closeWorkspaceDocuments(workspace)
     }
 
     private fun restoreOpenTabs(workspace: Workspace) {
@@ -182,7 +190,7 @@ class WorkspaceViewModel(context: Context) : ViewModel() {
     private fun publishDocument(document: EditorDocument) { openedWorkspaceId = document.workspaceId; _openedFile.value = WorkspaceFile(document.relativePath, document.name, document.content, document.content.toByteArray(Charsets.UTF_8).size.toLong(), document.originalLastModified, document.mimeType); _editorPath.value = document.relativePath; _editorContent.value = document.content; _editorDirty.value = document.isDirty; _editorState.value = document.state; _editorError.value = document.errorMessage }
     private suspend fun refreshOpenDocuments() { _openDocuments.value = documentManager.all() }
     private fun clearEditorState() { _openedFile.value = null; _editorPath.value = null; _editorContent.value = null; _editorDirty.value = false; _editorState.value = EditorDocumentState.READY; _editorError.value = null }
-    private fun load(workspace: Workspace, path: String, navigationStack: List<String>) { val normalized = normalizePath(path); navigationJob?.cancel(); navigationJob = viewModelScope.launch { _loading.value = true; _error.value = null; runCatching { fileSystem.list(workspace, normalized) }.onSuccess { _currentPath.value = normalized; _navigationStack.value = navigationStack.filter { it != normalized }.takeLast(50); _recentPaths.value = (_recentPaths.value.filter { it != normalized } + normalized).takeLast(20); _entries.value = it }.onFailure { _error.value = it.message ?: "Unable to load workspace" }; _loading.value = false } }
+    private fun load(workspace: Workspace, path: String, navigationStack: List<String>) { val normalized = normalizePath(path); navigationJob?.cancel(); navigationJob = viewModelScope.launch { _loading.value = true; _error.value = null; runCatching { fileSystem.list(workspace, normalized) }.onSuccess { raw -> val settings = NexusSettingsRuntime.current(); _currentPath.value = normalized; _navigationStack.value = navigationStack.filter { it != normalized }.takeLast(50); _recentPaths.value = (_recentPaths.value.filter { it != normalized } + normalized).takeLast(20); _entries.value = raw.filter { WorkspaceSettingsPolicy.shouldShowEntry(it, settings) }.sortedWith(Comparator { a, b -> WorkspaceSettingsPolicy.compare(a, b, settings) }) }.onFailure { _error.value = it.message ?: "Unable to load workspace" }; _loading.value = false } }
     private fun mutateAndRefresh(workspace: Workspace, operation: suspend () -> Any) { viewModelScope.launch { _error.value = null; runCatching { operation() }.onFailure { _error.value = it.message ?: "Operation failed" }.onSuccess { load(workspace, _currentPath.value, _navigationStack.value) } } }
     private fun normalizePath(path: String): String { val clean = path.trim().replace('\\', '/'); require(!clean.startsWith('/') && clean.split('/').none { it == "." || it == ".." || it.contains('\u0000') }) { "Invalid workspace path" }; return clean.split('/').filter { it.isNotEmpty() }.joinToString("/") }
     private fun mimeTypeFor(path: String): String = when (path.substringAfterLast('.', "").lowercase()) { "kt", "kts", "java", "groovy" -> "text/x-kotlin"; "js", "mjs", "cjs", "ts", "tsx", "jsx" -> "text/javascript"; "json" -> "application/json"; "xml" -> "application/xml"; "html", "htm" -> "text/html"; "css" -> "text/css"; "md", "markdown", "txt", "gradle", "properties", "yaml", "yml", "toml", "sh" -> "text/plain"; else -> "text/plain" }
