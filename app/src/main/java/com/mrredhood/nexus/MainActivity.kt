@@ -5,7 +5,6 @@ package com.mrredhood.nexus
 import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
-import androidx.activity.OnBackPressedDispatcherOwner
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -33,6 +32,8 @@ import com.mrredhood.nexus.core.workspace.Workspace
 import com.mrredhood.nexus.core.workspace.WorkspaceEntry
 import com.mrredhood.nexus.ui.NexusViewModel
 import com.mrredhood.nexus.ui.NexusViewModelFactory
+import com.mrredhood.nexus.ui.SettingsScreen
+import com.mrredhood.nexus.ui.SettingsViewModel
 import com.mrredhood.nexus.ui.WorkspaceViewModel
 import com.mrredhood.nexus.ui.WorkspaceViewModelFactory
 import com.mrredhood.nexus.ui.theme.NexusTheme
@@ -53,15 +54,24 @@ class MainActivity : ComponentActivity() {
 private fun NexusApp(vm: NexusViewModel) {
     val projects by vm.projects.collectAsStateWithLifecycle()
     val workspaces by vm.workspaces.collectAsStateWithLifecycle()
+    val settingsVm: SettingsViewModel = viewModel()
+    val settings by settingsVm.settings.collectAsStateWithLifecycle()
     var selectedProjectId by remember { mutableStateOf<String?>(null) }
+    var showSettings by remember { mutableStateOf(false) }
     var pickerCallback by remember { mutableStateOf<((Uri?) -> Unit)?>(null) }
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri -> pickerCallback?.invoke(uri); pickerCallback = null }
     fun chooseFolder(callback: (Uri?) -> Unit) { pickerCallback = callback; picker.launch(null) }
     val project = projects.firstOrNull { it.id == selectedProjectId }
     val workspace = project?.let { p -> workspaces.firstOrNull { it.projectId == p.id } }
+
+    if (showSettings) {
+        SettingsScreen(settings, settingsVm::update) { showSettings = false }
+        return
+    }
+
     Surface(Modifier.fillMaxSize()) {
         when {
-            project == null -> HomeScreen(projects, vm, ::chooseFolder) { selectedProjectId = it }
+            project == null -> HomeScreen(projects, vm, ::chooseFolder, { selectedProjectId = it }, { showSettings = true })
             workspace == null -> MissingWorkspaceScreen(project, vm, ::chooseFolder) { selectedProjectId = null }
             else -> WorkspaceScreen(project, workspace) { selectedProjectId = null }
         }
@@ -69,16 +79,16 @@ private fun NexusApp(vm: NexusViewModel) {
 }
 
 @Composable
-private fun HomeScreen(projects: List<NexusProject>, vm: NexusViewModel, chooseFolder: ((Uri?) -> Unit) -> Unit, onOpen: (String) -> Unit) {
+private fun HomeScreen(projects: List<NexusProject>, vm: NexusViewModel, chooseFolder: ((Uri?) -> Unit) -> Unit, onOpen: (String) -> Unit, onSettings: () -> Unit) {
     val context = LocalContext.current
     var create by remember { mutableStateOf(false) }
-    Scaffold(topBar = { TopAppBar(title = { Text("Nexus") }, actions = { IconButton(onClick = { create = true }) { Icon(Icons.Outlined.Add, "Create project") } }) }) { padding ->
+    Scaffold(topBar = { TopAppBar(title = { Text("Nexus") }, actions = { IconButton(onClick = onSettings) { Icon(Icons.Outlined.Settings, "Settings") }; IconButton(onClick = { create = true }) { Icon(Icons.Outlined.Add, "Create project") } }) }) { padding ->
         LazyColumn(Modifier.fillMaxSize().padding(padding).padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             item { Card(shape = MaterialTheme.shapes.extraLarge, colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHighest)) { Column(Modifier.padding(20.dp)) { Text("Workspace", style = MaterialTheme.typography.headlineSmall); Spacer(Modifier.height(8.dp)); Text("Select a folder and Nexus will persist access through Android's Storage Access Framework. No broad storage permission is required.") } } }
             item { Text("Projects", style = MaterialTheme.typography.titleLarge, modifier = Modifier.padding(top = 8.dp)) }
             if (projects.isEmpty()) item { Card(shape = MaterialTheme.shapes.large) { Column(Modifier.padding(20.dp)) { Text("No projects yet", style = MaterialTheme.typography.titleMedium); Text("Create a project and choose its workspace folder.", modifier = Modifier.padding(top = 6.dp)); FilledTonalButton(onClick = { create = true }, modifier = Modifier.padding(top = 14.dp)) { Icon(Icons.Outlined.Add, null); Spacer(Modifier.width(6.dp)); Text("Create project") } } } }
             items(projects, key = { it.id }) { project -> Card(onClick = { onOpen(project.id) }, shape = MaterialTheme.shapes.large) { Row(Modifier.fillMaxWidth().padding(18.dp), horizontalArrangement = Arrangement.SpaceBetween) { Column(Modifier.weight(1f)) { Text(project.name, style = MaterialTheme.typography.titleMedium); Text(project.repository ?: "Local workspace", style = MaterialTheme.typography.bodyMedium); Text("Branch · ${project.branch}", style = MaterialTheme.typography.labelMedium) }; IconButton(onClick = { vm.deleteProject(project.id) }) { Icon(Icons.Outlined.Delete, "Delete project") } } } }
-            item { Card(shape = MaterialTheme.shapes.large) { Row(Modifier.fillMaxWidth().padding(18.dp), horizontalArrangement = Arrangement.spacedBy(14.dp)) { Icon(Icons.Outlined.Settings, null); Column { Text("Foundation", style = MaterialTheme.typography.titleMedium); Text("Material 3 · API 36 · SAF · persistent workspace metadata", style = MaterialTheme.typography.bodySmall) } } }; Spacer(Modifier.height(20.dp)) }
+            item { Card(shape = MaterialTheme.shapes.large) { Row(Modifier.fillMaxWidth().padding(18.dp), horizontalArrangement = Arrangement.spacedBy(14.dp)) { Icon(Icons.Outlined.Settings, null); Column { Text("Nexus settings", style = MaterialTheme.typography.titleMedium); Text("Appearance, editor, workspace, AI, agents, safety, terminal and CI preferences", style = MaterialTheme.typography.bodySmall) } } }; Spacer(Modifier.height(20.dp)) }
         }
     }
     if (create) CreateProjectDialog(chooseFolder, { create = false }) { name, repository, uri -> vm.createProject(name, repository, uri, DocumentFile.fromTreeUri(context, uri)?.name ?: name) { create = false } }
@@ -112,6 +122,7 @@ private fun WorkspaceScreen(project: NexusProject, workspace: Workspace, onBack:
     val editorPath by vm.editorPath.collectAsStateWithLifecycle()
     val editorDirty by vm.editorDirty.collectAsStateWithLifecycle()
     val saving by vm.saving.collectAsStateWithLifecycle()
+    val openDocuments by vm.openDocuments.collectAsStateWithLifecycle()
     var createDialog by remember { mutableStateOf<String?>(null) }
     var nameDialog by remember { mutableStateOf<NameAction?>(null) }
     var destinationDialog by remember { mutableStateOf<DestinationAction?>(null) }
@@ -123,61 +134,29 @@ private fun WorkspaceScreen(project: NexusProject, workspace: Workspace, onBack:
     BackHandler {
         if (editorContent != null) {
             if (editorDirty) discardDialog = true else vm.clearEditor()
-        } else if (!vm.back(workspace)) {
-            onBack()
-        }
+        } else if (!vm.back(workspace)) onBack()
     }
 
     if (editorContent != null && editorPath != null) {
-        EditorScreen(editorPath!!, editorContent!!, editorDirty, saving, vm::updateEditorContent, { vm.saveEditor(workspace) }, { if (editorDirty) discardDialog = true else vm.clearEditor() })
+        EditorScreen(editorPath!!, editorContent!!, editorDirty, saving, openDocuments, { path -> vm.read(workspace, path) }, { path -> vm.closeEditor(workspace, path) }, vm::updateEditorContent, { vm.saveEditor(workspace) }, { if (editorDirty) discardDialog = true else vm.clearEditor() })
         if (discardDialog) AlertDialog(onDismissRequest = { discardDialog = false }, title = { Text("Unsaved changes") }, text = { Text("This file has unsaved changes. Discard them and close the editor?") }, confirmButton = { FilledTonalButton(onClick = { discardDialog = false; vm.clearEditor() }) { Text("Discard") } }, dismissButton = { TextButton(onClick = { discardDialog = false }) { Text("Keep editing") } })
         return
     }
 
     val segments = currentPath.split('/').filter { it.isNotBlank() }
-    val breadcrumbPaths = buildList {
-        add("")
-        var path = ""
-        segments.forEach { segment ->
-            path = if (path.isBlank()) segment else "$path/$segment"
-            add(path)
-        }
-    }
+    val breadcrumbPaths = buildList { add(""); var path = ""; segments.forEach { segment -> path = if (path.isBlank()) segment else "$path/$segment"; add(path) } }
 
     Scaffold(topBar = { TopAppBar(title = { Text(project.name) }, navigationIcon = { IconButton(onClick = { if (!vm.back(workspace)) onBack() }) { Icon(Icons.Outlined.ArrowBack, "Back") } }, actions = { IconButton(onClick = { vm.refresh(workspace) }) { Icon(Icons.Outlined.Refresh, "Refresh") }; IconButton(onClick = { createDialog = "file" }) { Icon(Icons.Outlined.Add, "Create file") }; IconButton(onClick = { createDialog = "folder" }) { Icon(Icons.Outlined.CreateNewFolder, "Create folder") } }) }) { padding ->
         Column(Modifier.fillMaxSize().padding(padding).padding(horizontal = 16.dp)) {
-            Card(Modifier.fillMaxWidth().padding(top = 8.dp), shape = MaterialTheme.shapes.large) {
-                Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 12.dp, vertical = 10.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
-                    breadcrumbPaths.forEachIndexed { index, path ->
-                        if (index > 0) { Icon(Icons.Outlined.ChevronRight, null, modifier = Modifier.size(18.dp)) }
-                        TextButton(onClick = { vm.navigateTo(workspace, path) }) {
-                            Text(if (index == 0) workspace.displayName else segments[index - 1], maxLines = 1)
-                        }
-                    }
-                }
-            }
-            if (currentPath.isNotBlank()) {
-                Row(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    FilledTonalButton(onClick = { vm.up(workspace) }) { Icon(Icons.Outlined.ArrowUpward, null); Spacer(Modifier.width(6.dp)); Text("Parent") }
-                }
-            }
+            Card(Modifier.fillMaxWidth().padding(top = 8.dp), shape = MaterialTheme.shapes.large) { Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 12.dp, vertical = 10.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) { breadcrumbPaths.forEachIndexed { index, path -> if (index > 0) Icon(Icons.Outlined.ChevronRight, null, modifier = Modifier.size(18.dp)); TextButton(onClick = { vm.navigateTo(workspace, path) }) { Text(if (index == 0) workspace.displayName else segments[index - 1], maxLines = 1) } } } }
+            if (currentPath.isNotBlank()) Row(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) { FilledTonalButton(onClick = { vm.up(workspace) }) { Icon(Icons.Outlined.ArrowUpward, null); Spacer(Modifier.width(6.dp)); Text("Parent") } }
             if (loading) LinearProgressIndicator(Modifier.fillMaxWidth().padding(top = 8.dp))
             LazyColumn(Modifier.fillMaxSize().padding(top = 10.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                items(entries, key = { it.relativePath }) { entry ->
-                    EntryCard(entry, { if (entry.type == EntryType.DIRECTORY) vm.enter(workspace, entry.relativePath) else vm.read(workspace, entry.relativePath) }, { action ->
-                        when (action) {
-                            FileAction.RENAME -> nameDialog = NameAction("Rename", entry)
-                            FileAction.COPY -> destinationDialog = DestinationAction("Copy", entry, false)
-                            FileAction.MOVE -> destinationDialog = DestinationAction("Move", entry, true)
-                            FileAction.DELETE -> deleteTarget = entry
-                        }
-                    })
-                }
+                items(entries, key = { it.relativePath }) { entry -> EntryCard(entry, { if (entry.type == EntryType.DIRECTORY) vm.enter(workspace, entry.relativePath) else vm.read(workspace, entry.relativePath) }, { action -> when (action) { FileAction.RENAME -> nameDialog = NameAction("Rename", entry); FileAction.COPY -> destinationDialog = DestinationAction("Copy", entry, false); FileAction.MOVE -> destinationDialog = DestinationAction("Move", entry, true); FileAction.DELETE -> deleteTarget = entry } }) }
                 item { Spacer(Modifier.height(20.dp)) }
             }
         }
     }
-
     createDialog?.let { type -> NameDialog(if (type == "folder") "New folder" else "New file", "Create", { createDialog = null }) { name -> if (type == "folder") vm.createDirectory(workspace, name) else vm.createFile(workspace, name); createDialog = null } }
     nameDialog?.let { action -> NameDialog(action.title, "Rename", { nameDialog = null }, action.entry.name) { name -> vm.rename(workspace, action.entry.relativePath, name); nameDialog = null } }
     destinationDialog?.let { action -> DestinationDialog(action.title, action.entry, { destinationDialog = null }) { destination -> if (action.move) vm.move(workspace, action.entry.relativePath, destination) else vm.copy(workspace, action.entry.relativePath, destination); destinationDialog = null } }
@@ -192,22 +171,7 @@ data class DestinationAction(val title: String, val entry: WorkspaceEntry, val m
 @Composable
 private fun EntryCard(entry: WorkspaceEntry, onOpen: () -> Unit, onAction: (FileAction) -> Unit) {
     var menu by remember { mutableStateOf(false) }
-    Card(onClick = onOpen, shape = MaterialTheme.shapes.large) {
-        Row(Modifier.fillMaxWidth().padding(16.dp), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-            Icon(if (entry.type == EntryType.DIRECTORY) Icons.Outlined.Folder else Icons.Outlined.Description, null)
-            Column(Modifier.weight(1f)) { Text(entry.name, style = MaterialTheme.typography.titleMedium); Text(if (entry.type == EntryType.DIRECTORY) "Folder" else formatBytes(entry.sizeBytes), style = MaterialTheme.typography.bodySmall) }
-            Box {
-                IconButton(onClick = { menu = true }) { Icon(Icons.Outlined.MoreVert, "File actions") }
-                DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
-                    DropdownMenuItem(text = { Text("Rename") }, leadingIcon = { Icon(Icons.Outlined.Edit, null) }, onClick = { menu = false; onAction(FileAction.RENAME) })
-                    DropdownMenuItem(text = { Text("Copy") }, leadingIcon = { Icon(Icons.Outlined.ContentCopy, null) }, onClick = { menu = false; onAction(FileAction.COPY) })
-                    DropdownMenuItem(text = { Text("Move") }, leadingIcon = { Icon(Icons.Outlined.DriveFileMove, null) }, onClick = { menu = false; onAction(FileAction.MOVE) })
-                    HorizontalDivider()
-                    DropdownMenuItem(text = { Text("Delete") }, leadingIcon = { Icon(Icons.Outlined.Delete, null) }, onClick = { menu = false; onAction(FileAction.DELETE) })
-                }
-            }
-        }
-    }
+    Card(onClick = onOpen, shape = MaterialTheme.shapes.large) { Row(Modifier.fillMaxWidth().padding(16.dp), horizontalArrangement = Arrangement.spacedBy(14.dp)) { Icon(if (entry.type == EntryType.DIRECTORY) Icons.Outlined.Folder else Icons.Outlined.Description, null); Column(Modifier.weight(1f)) { Text(entry.name, style = MaterialTheme.typography.titleMedium); Text(if (entry.type == EntryType.DIRECTORY) "Folder" else formatBytes(entry.sizeBytes), style = MaterialTheme.typography.bodySmall) }; Box { IconButton(onClick = { menu = true }) { Icon(Icons.Outlined.MoreVert, "File actions") }; DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) { DropdownMenuItem(text = { Text("Rename") }, leadingIcon = { Icon(Icons.Outlined.Edit, null) }, onClick = { menu = false; onAction(FileAction.RENAME) }); DropdownMenuItem(text = { Text("Copy") }, leadingIcon = { Icon(Icons.Outlined.ContentCopy, null) }, onClick = { menu = false; onAction(FileAction.COPY) }); DropdownMenuItem(text = { Text("Move") }, leadingIcon = { Icon(Icons.Outlined.DriveFileMove, null) }, onClick = { menu = false; onAction(FileAction.MOVE) }); HorizontalDivider(); DropdownMenuItem(text = { Text("Delete") }, leadingIcon = { Icon(Icons.Outlined.Delete, null) }, onClick = { menu = false; onAction(FileAction.DELETE) }) } } } }
 }
 
 @Composable
@@ -223,9 +187,24 @@ private fun DestinationDialog(title: String, entry: WorkspaceEntry, onDismiss: (
 }
 
 @Composable
-private fun EditorScreen(path: String, content: String, dirty: Boolean, saving: Boolean, onChange: (String) -> Unit, onSave: () -> Unit, onBack: () -> Unit) {
+private fun EditorScreen(path: String, content: String, dirty: Boolean, saving: Boolean, documents: List<com.mrredhood.nexus.core.editor.EditorDocument>, onActivate: (String) -> Unit, onClose: (String) -> Unit, onChange: (String) -> Unit, onSave: () -> Unit, onBack: () -> Unit) {
     Scaffold(topBar = { TopAppBar(title = { Column { Text(path.substringAfterLast('/')); Text(if (dirty) "Unsaved changes" else "Saved", style = MaterialTheme.typography.labelSmall) } }, navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.Outlined.ArrowBack, "Close editor") } }, actions = { IconButton(enabled = dirty && !saving, onClick = onSave) { if (saving) CircularProgressIndicator(modifier = Modifier.padding(4.dp)) else Icon(Icons.Outlined.Save, "Save") } }) }) { padding ->
-        Column(Modifier.fillMaxSize().padding(padding).padding(10.dp)) { Card(Modifier.fillMaxSize(), shape = MaterialTheme.shapes.large) { OutlinedTextField(value = content, onValueChange = onChange, modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()), textStyle = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace), singleLine = false, label = { Text(path) }) } }
+        Column(Modifier.fillMaxSize().padding(padding)) {
+            if (documents.isNotEmpty()) {
+                Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 8.dp, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    documents.forEach { document ->
+                        val active = document.relativePath == path
+                        Surface(shape = MaterialTheme.shapes.large, color = if (active) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surfaceContainerHighest) {
+                            Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+                                TextButton(onClick = { onActivate(document.relativePath) }) { Text((if (document.isDirty) "• " else "") + document.name, maxLines = 1) }
+                                IconButton(onClick = { onClose(document.relativePath) }) { Icon(Icons.Outlined.Close, "Close ${document.name}", modifier = Modifier.size(16.dp)) }
+                            }
+                        }
+                    }
+                }
+            }
+            Card(Modifier.fillMaxSize().padding(10.dp), shape = MaterialTheme.shapes.large) { OutlinedTextField(value = content, onValueChange = onChange, modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()), textStyle = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace), singleLine = false, label = { Text(path) }) }
+        }
     }
 }
 
