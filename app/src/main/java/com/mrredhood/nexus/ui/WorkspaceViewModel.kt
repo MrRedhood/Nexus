@@ -109,9 +109,10 @@ class WorkspaceViewModel(context: Context) : ViewModel() {
         }
     }
 
-    fun closeEditor(workspace: Workspace, relativePath: String = _editorPath.value ?: return) {
+    fun closeEditor(workspace: Workspace, relativePath: String? = null) {
+        val path = relativePath ?: _editorPath.value ?: return
         viewModelScope.launch {
-            documentManager.close(workspace.id, relativePath)
+            documentManager.close(workspace.id, path)
             val next = documentManager.active()
             if (next != null) publishDocument(next) else clearEditorState()
             refreshOpenDocuments()
