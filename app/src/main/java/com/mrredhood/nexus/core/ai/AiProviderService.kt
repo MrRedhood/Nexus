@@ -2,6 +2,7 @@ package com.mrredhood.nexus.core.ai
 
 import android.content.Context
 import com.mrredhood.nexus.core.settings.AdvancedSettingsRepository
+import com.mrredhood.nexus.core.settings.ApiKeyStore
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
@@ -9,19 +10,21 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
+import java.net.URLEncoder
 
 /** Executes the configured AI provider without bundling a provider SDK. */
 class AiProviderService(context: Context) {
     private val appContext = context.applicationContext
     private val settingsRepository = AdvancedSettingsRepository(appContext)
-    private val secrets = SecureSecretStore(appContext)
+    private val apiKeys = ApiKeyStore(appContext)
 
     suspend fun complete(request: AiRequest): ProviderResult = withContext(Dispatchers.IO) {
         val settings = settingsRepository.settings.first()
         val provider = settings.provider.trim()
-        val apiKey = secrets.get(apiKeyKey(provider))
+        val apiKey = apiKeys.get(provider)
             ?: return@withContext ProviderResult(false, "No API key configured for $provider.")
-        val model = request.model.ifBlank { resolveModel(provider, settings.model) }
+        val model = resolveModel(provider, request.model, settings.model)
+        if (model.isBlank()) return@withContext ProviderResult(false, "No model configured for $provider.")
 
         runCatching {
             if (provider.equals("Gemini", ignoreCase = true)) {
@@ -29,28 +32,14 @@ class AiProviderService(context: Context) {
             } else {
                 completeOpenAiCompatible(provider, apiKey, model, request, settings.endpoint)
             }
-        }.getOrElse { error ->
-            ProviderResult(false, error.message ?: "AI request failed.")
-        }
+        }.getOrElse { error -> ProviderResult(false, error.message ?: "AI request failed.") }
     }
 
-    suspend fun testConnection(): ProviderResult = complete(
-        AiRequest(
-            messages = listOf(AiMessage("user", "Reply with exactly: Nexus connection OK")),
-            model = "",
-            temperature = 0.0,
-            maxOutputTokens = 32,
-            stream = false
-        )
-    )
-
-    fun saveApiKey(provider: String, apiKey: String) {
-        secrets.put(apiKeyKey(provider), apiKey.trim())
+    suspend fun testConnection(): ProviderResult {
+        val settings = settingsRepository.settings.first()
+        val model = resolveModel(settings.provider, "", settings.model)
+        return complete(AiRequest(listOf(AiMessage("user", "Reply with exactly: Nexus connection OK")), model, 0.0, 32, false))
     }
-
-    fun hasApiKey(provider: String): Boolean = !secrets.get(apiKeyKey(provider)).isNullOrBlank()
-
-    fun removeApiKey(provider: String) = secrets.remove(apiKeyKey(provider))
 
     private fun completeGemini(apiKey: String, model: String, request: AiRequest): ProviderResult {
         val endpoint = "https://generativelanguage.googleapis.com/v1beta/models/${encodePath(model)}:generateContent?key=${urlEncode(apiKey)}"
@@ -69,21 +58,13 @@ class AiProviderService(context: Context) {
             })
         }
         val json = post(endpoint, body.toString(), null)
-        val text = json.optJSONArray("candidates")?.optJSONObject(0)
-            ?.optJSONObject("content")?.optJSONArray("parts")?.optJSONObject(0)
-            ?.optString("text").orEmpty()
+        val text = json.optJSONArray("candidates")?.optJSONObject(0)?.optJSONObject("content")?.optJSONArray("parts")?.optJSONObject(0)?.optString("text").orEmpty()
         if (text.isBlank()) return ProviderResult(false, "Gemini returned an empty response.")
         val usage = json.optJSONObject("usageMetadata")
         return ProviderResult(true, text, AiResponse(text, model, "Gemini", usage?.optIntOrNull("promptTokenCount"), usage?.optIntOrNull("candidatesTokenCount")))
     }
 
-    private fun completeOpenAiCompatible(
-        provider: String,
-        apiKey: String,
-        model: String,
-        request: AiRequest,
-        configuredEndpoint: String
-    ): ProviderResult {
+    private fun completeOpenAiCompatible(provider: String, apiKey: String, model: String, request: AiRequest, configuredEndpoint: String): ProviderResult {
         val endpoint = configuredEndpoint.trim().ifBlank { defaultEndpoint(provider) }
         require(endpoint.isNotBlank()) { "No endpoint configured for $provider." }
         val messages = JSONArray()
@@ -120,15 +101,18 @@ class AiProviderService(context: Context) {
             val json = runCatching { JSONObject(response) }.getOrElse { JSONObject().put("error", JSONObject().put("message", response)) }
             if (status !in 200..299) throw IllegalStateException("HTTP $status: ${json.optJSONObject("error")?.optString("message") ?: response}")
             json
-        } finally {
-            connection.disconnect()
-        }
+        } finally { connection.disconnect() }
     }
 
-    private fun resolveModel(provider: String, configured: String): String = when {
-        configured.isNotBlank() && configured != "default" -> configured
-        provider.equals("Gemini", true) -> "gemini-2.5-flash"
-        else -> ""
+    private fun resolveModel(provider: String, requested: String, configured: String): String {
+        if (requested.isNotBlank() && requested != "default") return requested
+        if (configured.isNotBlank() && configured != "default") return configured
+        return when {
+            provider.equals("Gemini", true) -> "gemini-2.5-flash"
+            provider.equals("OpenRouter", true) -> "google/gemini-2.5-flash"
+            provider.equals("DeepInfra", true) -> "meta-llama/Llama-3.3-70B-Instruct"
+            else -> ""
+        }
     }
 
     private fun defaultEndpoint(provider: String): String = when {
@@ -138,9 +122,7 @@ class AiProviderService(context: Context) {
         else -> ""
     }
 
-    private fun apiKeyKey(provider: String) = "api_key_${provider.lowercase().replace(Regex("[^a-z0-9]+"), "_")}"
-    private fun encodePath(value: String) = java.net.URLEncoder.encode(value, Charsets.UTF_8.name()).replace("+", "%20")
-    private fun urlEncode(value: String) = java.net.URLEncoder.encode(value, Charsets.UTF_8.name())
-
+    private fun encodePath(value: String) = URLEncoder.encode(value, Charsets.UTF_8.name()).replace("+", "%20")
+    private fun urlEncode(value: String) = URLEncoder.encode(value, Charsets.UTF_8.name())
     private fun JSONObject.optIntOrNull(name: String): Int? = if (has(name) && !isNull(name)) optInt(name) else null
 }
