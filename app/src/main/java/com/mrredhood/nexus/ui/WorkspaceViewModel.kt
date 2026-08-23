@@ -31,14 +31,11 @@ class WorkspaceViewModel(context: Context) : ViewModel() {
         load(workspace, "")
     }
 
-    fun enter(workspace: Workspace, relativePath: String) {
-        load(workspace, relativePath)
-    }
+    fun enter(workspace: Workspace, relativePath: String) = load(workspace, relativePath)
 
     fun up(workspace: Workspace) {
         val current = _currentPath.value
-        val parent = current.substringBeforeLast('/', "")
-        load(workspace, parent)
+        load(workspace, current.substringBeforeLast('/', ""))
     }
 
     fun refresh(workspace: Workspace) = load(workspace, _currentPath.value)
@@ -54,10 +51,21 @@ class WorkspaceViewModel(context: Context) : ViewModel() {
     fun clearOpenedFile() { _openedFile.value = null }
     fun clearError() { _error.value = null }
 
-    fun createFile(workspace: Workspace, name: String) = mutate { fileSystem.createFile(workspace, join(_currentPath.value, name)) }
-    fun createDirectory(workspace: Workspace, name: String) = mutate { fileSystem.createDirectory(workspace, join(_currentPath.value, name)) }
-    fun delete(workspace: Workspace, path: String) = mutate { fileSystem.delete(workspace, path).let { Unit } }
-    fun rename(workspace: Workspace, path: String, name: String) = mutate { fileSystem.rename(workspace, path, name) }
+    fun createFile(workspace: Workspace, name: String) = mutateAndRefresh(workspace) {
+        fileSystem.createFile(workspace, join(_currentPath.value, name))
+    }
+
+    fun createDirectory(workspace: Workspace, name: String) = mutateAndRefresh(workspace) {
+        fileSystem.createDirectory(workspace, join(_currentPath.value, name))
+    }
+
+    fun delete(workspace: Workspace, path: String) = mutateAndRefresh(workspace) {
+        fileSystem.delete(workspace, path)
+    }
+
+    fun rename(workspace: Workspace, path: String, name: String) = mutateAndRefresh(workspace) {
+        fileSystem.rename(workspace, path, name)
+    }
 
     private fun load(workspace: Workspace, path: String) {
         viewModelScope.launch {
@@ -73,10 +81,12 @@ class WorkspaceViewModel(context: Context) : ViewModel() {
         }
     }
 
-    private fun mutate(operation: suspend () -> Any) {
+    private fun mutateAndRefresh(workspace: Workspace, operation: suspend () -> Any) {
         viewModelScope.launch {
             _error.value = null
-            runCatching { operation() }.onFailure { _error.value = it.message ?: "Operation failed" }
+            runCatching { operation() }
+                .onFailure { _error.value = it.message ?: "Operation failed" }
+                .onSuccess { load(workspace, _currentPath.value) }
         }
     }
 
