@@ -1,6 +1,6 @@
 package com.mrredhood.nexus.core.ai
 
-import com.mrredhood.nexus.core.workspace.WorkspaceFileIndexEntry
+import com.mrredhood.nexus.core.workspace.WorkspaceIndexEntry
 import com.mrredhood.nexus.core.workspace.WorkspaceRetrievalResult
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -49,7 +49,7 @@ class AIContextServiceTest {
     @Test
     fun respectsRelatedFileLimit() {
         val related = (1..5).map { number ->
-            val entry = WorkspaceFileIndexEntry("File$number.kt", "File$number.kt", "Kotlin", 10, emptyList())
+            val entry = WorkspaceIndexEntry("File$number.kt", "File$number.kt", 10, 0, "kotlin", emptyList())
             WorkspaceRetrievalResult(entry, 100 - number, listOf("query terms")) to
                 context(AIContextSource.RELATED_FILE, "File$number.kt", "content")
         }
