@@ -8,6 +8,7 @@ import kotlinx.coroutines.sync.withLock
 class EditorDocumentManager {
     private val mutex = Mutex()
     private val documents = LinkedHashMap<DocumentKey, EditorDocument>()
+    private val recentlyClosed = LinkedHashMap<DocumentKey, EditorDocument>()
     private var activeKey: DocumentKey? = null
 
     suspend fun open(workspaceId: String, file: WorkspaceFile): EditorDocument = mutex.withLock {
@@ -17,6 +18,7 @@ class EditorDocumentManager {
         else if (existing.isDirty) existing
         else existing.synchronizedWith(file)
         documents[key] = document
+        recentlyClosed.remove(key)
         activeKey = key
         document
     }
@@ -41,19 +43,10 @@ class EditorDocumentManager {
         updated
     }
 
-    suspend fun updateViewState(
-        workspaceId: String,
-        relativePath: String,
-        viewState: EditorViewState
-    ): EditorDocument? = mutex.withLock {
+    suspend fun updateViewState(workspaceId: String, relativePath: String, viewState: EditorViewState): EditorDocument? = mutex.withLock {
         val key = DocumentKey(workspaceId, relativePath)
         val current = documents[key] ?: return@withLock null
-        val updated = current.copy(
-            cursorPosition = viewState.cursorPosition.coerceIn(0, current.content.length),
-            selectionStart = viewState.selectionStart.coerceIn(0, current.content.length),
-            selectionEnd = viewState.selectionEnd.coerceIn(0, current.content.length),
-            scrollPosition = viewState.scrollPosition.coerceAtLeast(0)
-        )
+        val updated = current.withViewState(viewState)
         documents[key] = updated
         activeKey = key
         updated
@@ -81,16 +74,20 @@ class EditorDocumentManager {
 
     suspend fun close(workspaceId: String, relativePath: String): EditorDocument? = mutex.withLock {
         val key = DocumentKey(workspaceId, relativePath)
-        val removed = documents.remove(key)
-        if (activeKey == key) activeKey = documents.keys.lastOrNull()
+        val removed = documents.remove(key) ?: return@withLock null
+        recentlyClosed[key] = removed
+        while (recentlyClosed.size > MAX_RECENTLY_CLOSED) recentlyClosed.remove(recentlyClosed.keys.first())
+        if (activeKey == key) activeKey = chooseAdjacentKey(key)
         removed
     }
 
     suspend fun closeOthers(workspaceId: String, keepRelativePath: String): List<EditorDocument> = mutex.withLock {
         val keep = DocumentKey(workspaceId, keepRelativePath)
         val removed = documents.filterKeys { it.workspaceId == workspaceId && it != keep }.values.toList()
+        removed.forEach { recentlyClosed[DocumentKey(it.workspaceId, it.relativePath)] = it }
         documents.keys.removeAll { it.workspaceId == workspaceId && it != keep }
-        activeKey = if (documents.containsKey(keep)) keep else documents.keys.lastOrNull()
+        activeKey = if (documents.containsKey(keep)) keep else activeKey
+        trimRecentlyClosed()
         removed
     }
 
@@ -98,16 +95,28 @@ class EditorDocumentManager {
 
     suspend fun closeWorkspace(workspaceId: String): List<EditorDocument> = mutex.withLock {
         val removed = documents.filterKeys { it.workspaceId == workspaceId }.values.toList()
+        removed.forEach { recentlyClosed[DocumentKey(it.workspaceId, it.relativePath)] = it }
         documents.keys.removeAll { it.workspaceId == workspaceId }
         if (activeKey?.workspaceId == workspaceId) activeKey = documents.keys.lastOrNull()
+        trimRecentlyClosed()
         removed
     }
 
     suspend fun closeEverything(): List<EditorDocument> = mutex.withLock {
         val removed = documents.values.toList()
+        removed.forEach { recentlyClosed[DocumentKey(it.workspaceId, it.relativePath)] = it }
         documents.clear()
         activeKey = null
+        trimRecentlyClosed()
         removed
+    }
+
+    suspend fun reopenLastClosed(workspaceId: String): EditorDocument? = mutex.withLock {
+        val key = recentlyClosed.keys.lastOrNull { it.workspaceId == workspaceId } ?: return@withLock null
+        val document = recentlyClosed.remove(key) ?: return@withLock null
+        documents[key] = document
+        activeKey = key
+        document
     }
 
     suspend fun all(): List<EditorDocument> = mutex.withLock { documents.values.toList() }
@@ -120,6 +129,15 @@ class EditorDocumentManager {
 
     suspend fun activeKey(): Pair<String, String>? = mutex.withLock { activeKey?.let { it.workspaceId to it.relativePath } }
 
+    private fun chooseAdjacentKey(closedKey: DocumentKey): DocumentKey? {
+        val keys = documents.keys.filter { it.workspaceId == closedKey.workspaceId }
+        return keys.lastOrNull()
+    }
+
+    private fun trimRecentlyClosed() {
+        while (recentlyClosed.size > MAX_RECENTLY_CLOSED) recentlyClosed.remove(recentlyClosed.keys.first())
+    }
+
     private fun updateLocked(workspaceId: String, relativePath: String, transform: (EditorDocument) -> EditorDocument): EditorDocument? {
         val key = DocumentKey(workspaceId, relativePath)
         val current = documents[key] ?: return null
@@ -130,4 +148,8 @@ class EditorDocumentManager {
     }
 
     private data class DocumentKey(val workspaceId: String, val relativePath: String)
+
+    companion object {
+        private const val MAX_RECENTLY_CLOSED = 20
+    }
 }
