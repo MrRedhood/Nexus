@@ -30,12 +30,13 @@ class EditorTabManager(context: Context) {
         val index = tabs.indexOf(oldPath)
         if (index >= 0) {
             tabs[index] = newPath
-            if (tabs.count { it == newPath } > 1) tabs.removeAt(index)
+            val duplicate = tabs.indexOfFirst { it == newPath && tabs.indexOf(it) != index }
+            if (duplicate >= 0) tabs.removeAt(index)
         }
         if (activeByWorkspace[workspaceId] == oldPath) activeByWorkspace[workspaceId] = newPath
         closedByWorkspace[workspaceId]?.let { closed ->
-            val closedIndex = closed.indexOf(oldPath)
-            if (closedIndex >= 0) { closed.removeAt(closedIndex); if (newPath !in closed) closed.addFirst(newPath) }
+            closed.remove(oldPath)
+            if (newPath !in closed) closed.addFirst(newPath)
         }
         persist(workspaceId)
     }
@@ -97,7 +98,8 @@ class EditorTabManager(context: Context) {
 
     fun reopenLastClosed(workspaceId: String): String? {
         val closed = closedByWorkspace[workspaceId] ?: return null
-        val path = if (closed.isEmpty()) null else closed.removeFirst() ?: return null
+        if (closed.isEmpty()) return null
+        val path = closed.removeFirst()
         val tabs = tabsByWorkspace.getOrPut(workspaceId) { mutableListOf() }
         if (path !in tabs) tabs += path
         activeByWorkspace[workspaceId] = path; persist(workspaceId); return path
