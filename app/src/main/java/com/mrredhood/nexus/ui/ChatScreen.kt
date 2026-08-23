@@ -1,5 +1,6 @@
 package com.mrredhood.nexus.ui
 
+import android.content.Context
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -27,13 +28,16 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.mrredhood.nexus.core.ai.ChatContext
 import com.mrredhood.nexus.core.ai.ChatContextStore
+import com.mrredhood.nexus.core.ai.WorkspaceContextService
 import com.mrredhood.nexus.core.model.NexusProject
 import com.mrredhood.nexus.core.workspace.Workspace
+import com.mrredhood.nexus.core.workspace.WorkspaceFileSystem
 
 @Composable
 fun ChatScreen(project: NexusProject, workspace: Workspace, context: ChatContext = ChatContext(), onClose: (() -> Unit)? = null) {
@@ -42,13 +46,19 @@ fun ChatScreen(project: NexusProject, workspace: Workspace, context: ChatContext
     val generating by vm.generating.collectAsStateWithLifecycle()
     val error by vm.error.collectAsStateWithLifecycle()
     val usage by vm.tokenUsage.collectAsStateWithLifecycle()
-    val liveContext by ChatContextStore.contexts.collectAsStateWithLifecycle()
+    val liveContexts by ChatContextStore.contexts.collectAsStateWithLifecycle()
+    val androidContext = LocalContext.current
+    val contextService = remember(androidContext) { WorkspaceContextService(WorkspaceFileSystem(androidContext.applicationContext)) }
     var input by remember { mutableStateOf("") }
     val listState = rememberLazyListState()
 
-    val workspaceContext = liveContext[workspace.id] ?: context
+    val workspaceContext = liveContexts[workspace.id] ?: context
 
-    LaunchedEffect(workspace.id) { vm.open(workspace.id) }
+    LaunchedEffect(workspace.id) {
+        vm.open(workspace.id)
+        runCatching { contextService.refresh(workspace) }
+    }
+
     LaunchedEffect(messages.size, messages.lastOrNull()?.content) {
         if (messages.isNotEmpty()) listState.animateScrollToItem(messages.lastIndex)
     }
@@ -94,7 +104,7 @@ fun ChatScreen(project: NexusProject, workspace: Workspace, context: ChatContext
                 enabled = !generating
             )
             IconButton(
-                onClick = { if (generating) vm.stop() else { vm.send(input, workspaceContext); input = "" } }
+                onClick = { if (generating) vm.stop() else { vm.send(input, liveContexts[workspace.id] ?: workspaceContext); input = "" } }
             ) {
                 Icon(if (generating) Icons.Outlined.Stop else Icons.Outlined.Send, if (generating) "Stop" else "Send")
             }
