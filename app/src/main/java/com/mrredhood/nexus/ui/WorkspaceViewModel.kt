@@ -26,18 +26,9 @@ class WorkspaceViewModel(context: Context) : ViewModel() {
     private val _openedFile = MutableStateFlow<WorkspaceFile?>(null)
     val openedFile: StateFlow<WorkspaceFile?> = _openedFile.asStateFlow()
 
-    fun open(workspace: Workspace) {
-        _currentPath.value = ""
-        load(workspace, "")
-    }
-
+    fun open(workspace: Workspace) { _currentPath.value = ""; load(workspace, "") }
     fun enter(workspace: Workspace, relativePath: String) = load(workspace, relativePath)
-
-    fun up(workspace: Workspace) {
-        val current = _currentPath.value
-        load(workspace, current.substringBeforeLast('/', ""))
-    }
-
+    fun up(workspace: Workspace) = load(workspace, _currentPath.value.substringBeforeLast('/', ""))
     fun refresh(workspace: Workspace) = load(workspace, _currentPath.value)
 
     fun read(workspace: Workspace, relativePath: String) {
@@ -51,31 +42,17 @@ class WorkspaceViewModel(context: Context) : ViewModel() {
     fun clearOpenedFile() { _openedFile.value = null }
     fun clearError() { _error.value = null }
 
-    fun createFile(workspace: Workspace, name: String) = mutateAndRefresh(workspace) {
-        fileSystem.createFile(workspace, join(_currentPath.value, name))
-    }
-
-    fun createDirectory(workspace: Workspace, name: String) = mutateAndRefresh(workspace) {
-        fileSystem.createDirectory(workspace, join(_currentPath.value, name))
-    }
-
-    fun delete(workspace: Workspace, path: String) = mutateAndRefresh(workspace) {
-        fileSystem.delete(workspace, path)
-    }
-
-    fun rename(workspace: Workspace, path: String, name: String) = mutateAndRefresh(workspace) {
-        fileSystem.rename(workspace, path, name)
-    }
+    fun createFile(workspace: Workspace, name: String) = mutateAndRefresh(workspace) { fileSystem.createFile(workspace, join(_currentPath.value, name)) }
+    fun createDirectory(workspace: Workspace, name: String) = mutateAndRefresh(workspace) { fileSystem.createDirectory(workspace, join(_currentPath.value, name)) }
+    fun delete(workspace: Workspace, path: String) = mutateAndRefresh(workspace) { fileSystem.delete(workspace, path) }
+    fun rename(workspace: Workspace, path: String, name: String) = mutateAndRefresh(workspace) { fileSystem.rename(workspace, path, name) }
 
     private fun load(workspace: Workspace, path: String) {
         viewModelScope.launch {
             _loading.value = true
             _error.value = null
             runCatching { fileSystem.list(workspace, path) }
-                .onSuccess {
-                    _currentPath.value = path
-                    _entries.value = it
-                }
+                .onSuccess { _currentPath.value = path; _entries.value = it }
                 .onFailure { _error.value = it.message ?: "Unable to load workspace" }
             _loading.value = false
         }
@@ -90,7 +67,12 @@ class WorkspaceViewModel(context: Context) : ViewModel() {
         }
     }
 
-    private fun join(parent: String, child: String): String = if (parent.isBlank()) child.trim() else "${parent.trimEnd('/')}/${child.trim()}"
+    private fun join(parent: String, child: String): String {
+        val cleanChild = child.trim().replace('\\', '/').trim('/')
+        if (parent.isBlank()) return cleanChild
+        val cleanParent = parent.trim('/').replace('\\', '/')
+        return if (cleanChild == cleanParent || cleanChild.startsWith("$cleanParent/")) cleanChild else "$cleanParent/$cleanChild"
+    }
 }
 
 class WorkspaceViewModelFactory(private val context: Context) : ViewModelProvider.Factory {
