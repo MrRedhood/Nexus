@@ -90,14 +90,13 @@ class WorkspaceFileSystem(private val context: Context) {
         val destination = normalize(destinationPath)
         require(destination.isNotEmpty()) { "Destination is required" }
         require(resolveDocumentOrNull(workspace, destination) == null) { "Destination already exists: $destination" }
-        if (source.isDirectory) {
-            copyDirectory(workspace, source, destination)
-        } else {
+        if (source.isDirectory) copyDirectory(workspace, source, destination) else {
             val parent = ensureDirectory(workspace, parent(destination))
             val target = parent.createFile(source.type ?: "application/octet-stream", leaf(destination))
                 ?: throw IOException("Unable to create copy: $destination")
-            resolver.openInputStream(source.uri)?.use { input -> resolver.openOutputStream(target.uri)?.use { output -> input.copyTo(output) } }
-                ?: throw IOException("Unable to read source: $sourcePath")
+            resolver.openInputStream(source.uri)?.use { input ->
+                resolver.openOutputStream(target.uri)?.use { output -> input.copyTo(output) }
+            } ?: throw IOException("Unable to read source: $sourcePath")
         }
     }
 
@@ -109,10 +108,11 @@ class WorkspaceFileSystem(private val context: Context) {
         val target = ensureDirectory(workspace, destination)
         source.listFiles().forEach { child ->
             val childName = child.name ?: return@forEach
-            if (child.isDirectory) copyDirectory(workspace, child, join(destination, childName))
-            else {
+            if (child.isDirectory) copyDirectory(workspace, child, join(destination, childName)) else {
                 val out = target.createFile(child.type ?: "application/octet-stream", childName) ?: throw IOException("Unable to copy $childName")
-                resolver.openInputStream(child.uri)?.use { input -> resolver.openOutputStream(out.uri)?.use { output -> input.copyTo(output) } }
+                resolver.openInputStream(child.uri)?.use { input ->
+                    resolver.openOutputStream(out.uri)?.use { output -> input.copyTo(output) }
+                }
             }
         }
     }
@@ -124,9 +124,7 @@ class WorkspaceFileSystem(private val context: Context) {
         val normalized = normalize(relativePath)
         var current = DocumentFile.fromTreeUri(context, workspace.uri()) ?: throw IOException("Workspace is unavailable")
         if (normalized.isEmpty()) return current
-        for (part in normalized.split('/')) {
-            current = current.findFile(part) ?: return null
-        }
+        for (part in normalized.split('/')) current = current.findFile(part) ?: return null
         return current
     }
 
@@ -136,7 +134,7 @@ class WorkspaceFileSystem(private val context: Context) {
         if (normalized.isEmpty()) return current
         for (part in normalized.split('/')) {
             current = current.findFile(part)?.takeIf { it.isDirectory } ?: current.createDirectory(part)
-            ?: throw IOException("Unable to create directory: $part")
+                ?: throw IOException("Unable to create directory: $part")
         }
         return current
     }
