@@ -47,6 +47,15 @@ class NexusActionExecutor(private val fileSystem: WorkspaceFileSystem) {
     private fun requirePath(action: NexusAction): String = action.path?.trim()?.takeIf { it.isNotEmpty() }
         ?: error("${action.type} requires a file path")
 
+    /** Finds an element in a list at or after the supplied index. */
+    private fun indexOfFrom(lines: List<String>, element: String, startIndex: Int): Int {
+        val start = startIndex.coerceAtLeast(0)
+        for (index in start until lines.size) {
+            if (lines[index] == element) return index
+        }
+        return -1
+    }
+
     /** Applies the common unified-diff format emitted by code-editing agents. */
     private fun applyUnifiedPatch(original: String, patch: String): String {
         val originalLines = original.split("\n").toMutableList()
@@ -58,13 +67,14 @@ class NexusActionExecutor(private val fileSystem: WorkspaceFileSystem) {
         var cursor = 0
         for (hunkIndex in hunks.indices) {
             val header = hunks[hunkIndex]
-            val headerIndex = patchLines.indexOf(header, cursor)
+            val headerIndex = indexOfFrom(patchLines, header, cursor)
             require(headerIndex >= 0) { "Unable to locate unified diff hunk" }
             val match = Regex("@@ -(\\d+)(?:,(\\d+))? \\+(\\d+)(?:,(\\d+))? @@").find(header)
                 ?: error("Invalid unified diff hunk: $header")
             val oldStart = match.groupValues[1].toInt() - 1 + offset
             val nextHeader = if (hunkIndex + 1 < hunks.size) {
-                patchLines.indexOf(hunks[hunkIndex + 1], headerIndex + 1).takeIf { it >= 0 } ?: patchLines.size
+                indexOfFrom(patchLines, hunks[hunkIndex + 1], headerIndex + 1)
+                    .takeIf { it >= 0 } ?: patchLines.size
             } else {
                 patchLines.size
             }
