@@ -18,6 +18,8 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.ArrowBack
@@ -27,6 +29,7 @@ import androidx.compose.material.icons.outlined.Description
 import androidx.compose.material.icons.outlined.Folder
 import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material.icons.outlined.Refresh
+import androidx.compose.material.icons.outlined.Save
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
@@ -50,6 +53,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.documentfile.provider.DocumentFile
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -104,12 +108,7 @@ private fun NexusApp(vm: NexusViewModel) {
 }
 
 @Composable
-private fun HomeScreen(
-    projects: List<NexusProject>,
-    vm: NexusViewModel,
-    chooseFolder: ((Uri?) -> Unit) -> Unit,
-    onOpen: (String) -> Unit
-) {
+private fun HomeScreen(projects: List<NexusProject>, vm: NexusViewModel, chooseFolder: ((Uri?) -> Unit) -> Unit, onOpen: (String) -> Unit) {
     val context = LocalContext.current
     var create by remember { mutableStateOf(false) }
     Scaffold(topBar = {
@@ -165,55 +164,37 @@ private fun HomeScreen(
             }
         }
     }
-    if (create) {
-        CreateProjectDialog(
-            chooseFolder = chooseFolder,
-            onDismiss = { create = false },
-            onCreate = { name, repository, uri ->
-                val displayName = DocumentFile.fromTreeUri(context, uri)?.name ?: name
-                vm.createProject(name, repository, uri, displayName) { create = false }
-            }
-        )
+    if (create) CreateProjectDialog(chooseFolder, { create = false }) { name, repository, uri ->
+        val displayName = DocumentFile.fromTreeUri(context, uri)?.name ?: name
+        vm.createProject(name, repository, uri, displayName) { create = false }
     }
 }
 
 @Composable
-private fun CreateProjectDialog(
-    chooseFolder: ((Uri?) -> Unit) -> Unit,
-    onDismiss: () -> Unit,
-    onCreate: (String, String?, Uri) -> Unit
-) {
+private fun CreateProjectDialog(chooseFolder: ((Uri?) -> Unit) -> Unit, onDismiss: () -> Unit, onCreate: (String, String?, Uri) -> Unit) {
     val context = LocalContext.current
     var name by remember { mutableStateOf("") }
     var repository by remember { mutableStateOf("") }
     var uri by remember { mutableStateOf<Uri?>(null) }
     var folderName by remember { mutableStateOf("") }
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("Create project") },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                OutlinedTextField(name, { name = it }, label = { Text("Project name") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                OutlinedTextField(repository, { repository = it }, label = { Text("GitHub repository (optional)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                Card(shape = MaterialTheme.shapes.large) {
-                    Column(Modifier.fillMaxWidth().padding(14.dp)) {
-                        Text("Workspace folder", style = MaterialTheme.typography.titleSmall)
-                        Text(folderName.ifBlank { "No folder selected" }, style = MaterialTheme.typography.bodyMedium)
-                        FilledTonalButton(onClick = {
-                            chooseFolder { selected ->
-                                uri = selected
-                                folderName = selected?.let { DocumentFile.fromTreeUri(context, it)?.name ?: "Selected folder" } ?: ""
-                            }
-                        }, modifier = Modifier.padding(top = 8.dp)) {
-                            Icon(Icons.Outlined.FolderOpen, null); Spacer(Modifier.padding(3.dp)); Text("Choose folder")
+    AlertDialog(onDismissRequest = onDismiss, title = { Text("Create project") }, text = {
+        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            OutlinedTextField(name, { name = it }, label = { Text("Project name") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+            OutlinedTextField(repository, { repository = it }, label = { Text("GitHub repository (optional)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+            Card(shape = MaterialTheme.shapes.large) {
+                Column(Modifier.fillMaxWidth().padding(14.dp)) {
+                    Text("Workspace folder", style = MaterialTheme.typography.titleSmall)
+                    Text(folderName.ifBlank { "No folder selected" }, style = MaterialTheme.typography.bodyMedium)
+                    FilledTonalButton(onClick = {
+                        chooseFolder { selected ->
+                            uri = selected
+                            folderName = selected?.let { DocumentFile.fromTreeUri(context, it)?.name ?: "Selected folder" } ?: ""
                         }
-                    }
+                    }, modifier = Modifier.padding(top = 8.dp)) { Icon(Icons.Outlined.FolderOpen, null); Spacer(Modifier.padding(3.dp)); Text("Choose folder") }
                 }
             }
-        },
-        confirmButton = { FilledTonalButton(enabled = name.isNotBlank() && uri != null, onClick = { uri?.let { onCreate(name.trim(), repository.trim().ifBlank { null }, it) } }) { Text("Create") } },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
-    )
+        }
+    }, confirmButton = { FilledTonalButton(enabled = name.isNotBlank() && uri != null, onClick = { uri?.let { onCreate(name.trim(), repository.trim().ifBlank { null }, it) } }) { Text("Create") } }, dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } })
 }
 
 @Composable
@@ -226,10 +207,7 @@ private fun MissingWorkspaceScreen(project: NexusProject, vm: NexusViewModel, ch
                 Text("Nexus no longer has access to the selected folder. Reconnect the project to a folder.", modifier = Modifier.padding(top = 8.dp))
                 FilledTonalButton(onClick = {
                     chooseFolder { uri ->
-                        if (uri != null) {
-                            val name = DocumentFile.fromTreeUri(context, uri)?.name ?: project.name
-                            vm.attachWorkspace(project, uri, name)
-                        }
+                        if (uri != null) vm.attachWorkspace(project, uri, DocumentFile.fromTreeUri(context, uri)?.name ?: project.name)
                     }
                 }, modifier = Modifier.padding(top = 14.dp)) { Text("Reconnect workspace") }
             }
@@ -245,10 +223,32 @@ private fun WorkspaceScreen(project: NexusProject, workspace: Workspace, onBack:
     val currentPath by vm.currentPath.collectAsStateWithLifecycle()
     val loading by vm.loading.collectAsStateWithLifecycle()
     val error by vm.error.collectAsStateWithLifecycle()
-    val openedFile by vm.openedFile.collectAsStateWithLifecycle()
+    val editorContent by vm.editorContent.collectAsStateWithLifecycle()
+    val editorPath by vm.editorPath.collectAsStateWithLifecycle()
+    val editorDirty by vm.editorDirty.collectAsStateWithLifecycle()
+    val saving by vm.saving.collectAsStateWithLifecycle()
     var createDialog by remember { mutableStateOf<String?>(null) }
+    var discardDialog by remember { mutableStateOf(false) }
 
     LaunchedEffect(workspace.id) { vm.open(workspace) }
+
+    if (editorContent != null && editorPath != null) {
+        EditorScreen(
+            path = editorPath!!,
+            content = editorContent!!,
+            dirty = editorDirty,
+            saving = saving,
+            onChange = vm::updateEditorContent,
+            onSave = { vm.saveEditor(workspace) },
+            onBack = {
+                if (editorDirty) discardDialog = true else vm.clearEditor()
+            }
+        )
+        if (discardDialog) {
+            AlertDialog(onDismissRequest = { discardDialog = false }, title = { Text("Unsaved changes") }, text = { Text("This file has unsaved changes. Discard them and close the editor?") }, confirmButton = { FilledTonalButton(onClick = { discardDialog = false; vm.clearEditor() }) { Text("Discard") } }, dismissButton = { TextButton(onClick = { discardDialog = false }) { Text("Keep editing") } })
+        }
+        return
+    }
 
     Scaffold(topBar = {
         TopAppBar(
@@ -262,36 +262,47 @@ private fun WorkspaceScreen(project: NexusProject, workspace: Workspace, onBack:
         )
     }) { padding ->
         Column(Modifier.fillMaxSize().padding(padding).padding(horizontal = 16.dp)) {
-            if (currentPath.isNotBlank()) {
-                FilledTonalButton(onClick = { vm.up(workspace) }, modifier = Modifier.padding(vertical = 8.dp)) { Icon(Icons.Outlined.ArrowBack, null); Spacer(Modifier.padding(3.dp)); Text("Parent") }
-            }
+            if (currentPath.isNotBlank()) FilledTonalButton(onClick = { vm.up(workspace) }, modifier = Modifier.padding(vertical = 8.dp)) { Icon(Icons.Outlined.ArrowBack, null); Spacer(Modifier.padding(3.dp)); Text("Parent") }
             if (loading) CircularProgressIndicator(Modifier.padding(16.dp))
             LazyColumn(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 items(entries, key = { it.relativePath }) { entry ->
-                    EntryCard(entry, onOpen = {
-                        if (entry.type == EntryType.DIRECTORY) vm.enter(workspace, entry.relativePath) else vm.read(workspace, entry.relativePath)
-                    }, onDelete = { vm.delete(workspace, entry.relativePath) })
+                    EntryCard(entry, onOpen = { if (entry.type == EntryType.DIRECTORY) vm.enter(workspace, entry.relativePath) else vm.read(workspace, entry.relativePath) }, onDelete = { vm.delete(workspace, entry.relativePath) })
                 }
                 item { Spacer(Modifier.height(20.dp)) }
             }
         }
     }
 
-    createDialog?.let { type ->
-        NameDialog(
-            title = if (type == "folder") "New folder" else "New file",
-            onDismiss = { createDialog = null },
-            onConfirm = { name ->
-                if (type == "folder") vm.createDirectory(workspace, name) else vm.createFile(workspace, name)
-                createDialog = null
+    createDialog?.let { type -> NameDialog(if (type == "folder") "New folder" else "New file", { createDialog = null }) { name ->
+        if (type == "folder") vm.createDirectory(workspace, name) else vm.createFile(workspace, name)
+        createDialog = null
+    } }
+    error?.let { message -> AlertDialog(onDismissRequest = vm::clearError, title = { Text("Workspace error") }, text = { Text(message) }, confirmButton = { TextButton(onClick = vm::clearError) { Text("OK") } }) }
+}
+
+@Composable
+private fun EditorScreen(path: String, content: String, dirty: Boolean, saving: Boolean, onChange: (String) -> Unit, onSave: () -> Unit, onBack: () -> Unit) {
+    Scaffold(topBar = {
+        TopAppBar(
+            title = { Column { Text(path.substringAfterLast('/')); Text(if (dirty) "Unsaved changes" else "Saved", style = MaterialTheme.typography.labelSmall) } },
+            navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.Outlined.ArrowBack, "Close editor") } },
+            actions = {
+                IconButton(enabled = dirty && !saving, onClick = onSave) { if (saving) CircularProgressIndicator() else Icon(Icons.Outlined.Save, "Save") }
             }
         )
-    }
-    error?.let { message ->
-        AlertDialog(onDismissRequest = vm::clearError, title = { Text("Workspace error") }, text = { Text(message) }, confirmButton = { TextButton(onClick = vm::clearError) { Text("OK") } })
-    }
-    openedFile?.let { file ->
-        AlertDialog(onDismissRequest = vm::clearOpenedFile, title = { Text(file.name) }, text = { Text(file.content, style = MaterialTheme.typography.bodySmall) }, confirmButton = { TextButton(onClick = vm::clearOpenedFile) { Text("Close") } })
+    }) { padding ->
+        Column(Modifier.fillMaxSize().padding(padding).padding(10.dp)) {
+            Card(Modifier.fillMaxSize(), shape = MaterialTheme.shapes.large) {
+                OutlinedTextField(
+                    value = content,
+                    onValueChange = onChange,
+                    modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()),
+                    textStyle = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace),
+                    singleLine = false,
+                    label = { Text(path) }
+                )
+            }
+        }
     }
 }
 
