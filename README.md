@@ -2,22 +2,24 @@
 
 Nexus is a mobile-first AI development environment for building, modifying, testing, debugging, and shipping software from Android, with GitHub as the cloud development/build backbone.
 
-## V1 principles
+## V1 foundation in this branch
 
-- Kotlin + Jetpack Compose Android client.
-- Cloud-first build execution through GitHub Actions.
-- No Android SDK, NDK, JDK, or Gradle build infrastructure bundled into the app.
-- Project/workspace/editor/Git/GitHub/CI/AI capabilities are built around reusable primitives.
-- Build artifacts are uploaded by CI and retained as downloadable GitHub Actions artifacts.
+- Kotlin + Jetpack Compose + Material 3.
+- API 36 target/compile configuration.
+- Persistent project metadata using DataStore.
+- Project/workspace domain primitives.
+- Cloud-first build architecture: no Android SDK, NDK, JDK, or Gradle build infrastructure is bundled into the APK.
+- GitHub Actions CI with Android 36 SDK setup.
+- Successful CI uploads a downloadable debug APK artifact and test reports.
 
-## Current foundation
+## Build pipeline
 
-This repository contains the initial Android application foundation, domain models, project architecture, security/storage/networking interfaces, and a GitHub Actions Android CI pipeline that produces downloadable debug APK and test artifacts.
+`Android source -> GitHub Actions -> JDK 17 -> Android SDK 36 -> Gradle -> tests -> debug APK artifact`
 
-## Build locally
+Artifacts are retained for 14 days and can be downloaded from the successful GitHub Actions run under **Artifacts**.
 
-```bash
-./gradlew assembleDebug
-```
+## Roadmap implementation order
 
-CI is the canonical build environment for V1.
+Foundation -> Workspace -> File System -> Editor -> Search/Indexing -> Git -> GitHub -> Cloud Build -> Terminal -> Testing -> AI -> Context -> Tools -> Patch/Edit -> Tasks -> Agents -> Debugging -> Parallel AI -> Memory -> GitHub engineering -> advanced builds -> ecosystem.
+
+The application is being rebuilt as a native Android product rather than extending the old Acode plugin architecture.
