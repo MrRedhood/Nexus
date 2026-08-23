@@ -1,5 +1,6 @@
 package com.mrredhood.nexus.core.editor
 
+import com.mrredhood.nexus.core.ai.ChatContextStore
 import com.mrredhood.nexus.core.workspace.WorkspaceFile
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -18,12 +19,16 @@ class EditorDocumentManager {
         documents[key] = document
         recentlyClosed.remove(key)
         activeKey = key
+        publishContext(document)
         document
     }
 
     suspend fun activate(workspaceId: String, relativePath: String): EditorDocument? = mutex.withLock {
         val key = DocumentKey(workspaceId, relativePath)
-        documents[key]?.also { activeKey = key }
+        documents[key]?.also {
+            activeKey = key
+            publishContext(it)
+        }
     }
 
     suspend fun active(): EditorDocument? = mutex.withLock { activeKey?.let(documents::get) }
@@ -35,6 +40,7 @@ class EditorDocumentManager {
         val updated = current.withContent(content)
         documents[key] = updated
         activeKey = key
+        publishContext(updated)
         updated
     }
 
@@ -44,6 +50,7 @@ class EditorDocumentManager {
         val updated = current.withViewState(viewState)
         documents[key] = updated
         activeKey = key
+        publishContext(updated)
         updated
     }
 
@@ -56,6 +63,7 @@ class EditorDocumentManager {
         val document = (documents[key] ?: EditorDocument.from(workspaceId, file)).synchronizedWith(file)
         documents[key] = document
         activeKey = key
+        publishContext(document)
         document
     }
 
@@ -66,6 +74,7 @@ class EditorDocumentManager {
         val relocated = current.copy(relativePath = newPath, name = newName)
         documents[newKey] = relocated
         if (activeKey == oldKey) activeKey = newKey
+        if (activeKey == newKey) publishContext(relocated)
         relocated
     }
 
@@ -75,22 +84,30 @@ class EditorDocumentManager {
             val suffix = oldKey.relativePath.removePrefix(oldPrefix).trimStart('/')
             val newPath = if (suffix.isBlank()) newPrefix else "$newPrefix/$suffix"
             val newKey = DocumentKey(workspaceId, newPath)
+            val relocated = document.copy(relativePath = newPath, name = newPath.substringAfterLast('/'))
             documents.remove(oldKey)
-            documents[newKey] = document.copy(relativePath = newPath, name = newPath.substringAfterLast('/'))
+            documents[newKey] = relocated
             if (activeKey == oldKey) activeKey = newKey
         }
+        activeKey?.let { documents[it] }?.let(::publishContext)
     }
 
     suspend fun remove(workspaceId: String, relativePath: String) = mutex.withLock {
         val key = DocumentKey(workspaceId, relativePath)
         documents.remove(key)
-        if (activeKey == key) activeKey = chooseAdjacentKey(key)
+        if (activeKey == key) {
+            activeKey = chooseAdjacentKey(key)
+            publishActiveContext(workspaceId)
+        }
     }
 
     suspend fun removeTree(workspaceId: String, prefix: String) = mutex.withLock {
         val keys = documents.keys.filter { it.workspaceId == workspaceId && (it.relativePath == prefix || it.relativePath.startsWith("$prefix/")) }
         documents.keys.removeAll(keys.toSet())
-        if (activeKey?.workspaceId == workspaceId && activeKey?.relativePath?.let { it == prefix || it.startsWith("$prefix/") } == true) activeKey = documents.keys.lastOrNull { it.workspaceId == workspaceId }
+        if (activeKey?.workspaceId == workspaceId && activeKey?.relativePath?.let { it == prefix || it.startsWith("$prefix/") } == true) {
+            activeKey = documents.keys.lastOrNull { it.workspaceId == workspaceId }
+            publishActiveContext(workspaceId)
+        }
     }
 
     suspend fun close(workspaceId: String, relativePath: String): EditorDocument? = mutex.withLock {
@@ -98,7 +115,10 @@ class EditorDocumentManager {
         val removed = documents.remove(key) ?: return@withLock null
         recentlyClosed[key] = removed
         trimRecentlyClosed()
-        if (activeKey == key) activeKey = chooseAdjacentKey(key)
+        if (activeKey == key) {
+            activeKey = chooseAdjacentKey(key)
+            publishActiveContext(workspaceId)
+        }
         removed
     }
 
@@ -109,6 +129,7 @@ class EditorDocumentManager {
         documents.keys.removeAll { it.workspaceId == workspaceId && it != keep }
         activeKey = if (documents.containsKey(keep)) keep else activeKey
         trimRecentlyClosed()
+        publishActiveContext(workspaceId)
         removed
     }
 
@@ -119,6 +140,7 @@ class EditorDocumentManager {
         documents.keys.removeAll { it.workspaceId == workspaceId }
         if (activeKey?.workspaceId == workspaceId) activeKey = documents.keys.lastOrNull()
         trimRecentlyClosed()
+        publishActiveContext(workspaceId)
         removed
     }
 
@@ -128,6 +150,7 @@ class EditorDocumentManager {
         documents.clear()
         activeKey = null
         trimRecentlyClosed()
+        removed.groupBy(EditorDocument::workspaceId).keys.forEach(ChatContextStore::clear)
         removed
     }
 
@@ -136,6 +159,7 @@ class EditorDocumentManager {
         val document = recentlyClosed.remove(key) ?: return@withLock null
         documents[key] = document
         activeKey = key
+        publishContext(document)
         document
     }
 
@@ -152,7 +176,17 @@ class EditorDocumentManager {
         val updated = transform(current)
         documents[key] = updated
         activeKey = key
+        publishContext(updated)
         return updated
+    }
+
+    private fun publishContext(document: EditorDocument) {
+        ChatContextStore.updateCurrentFile(document.workspaceId, document.relativePath, document.content)
+    }
+
+    private fun publishActiveContext(workspaceId: String) {
+        val active = activeKey?.takeIf { it.workspaceId == workspaceId }?.let(documents::get)
+        if (active != null) publishContext(active) else ChatContextStore.updateCurrentFile(workspaceId, null, null)
     }
 
     private data class DocumentKey(val workspaceId: String, val relativePath: String)
