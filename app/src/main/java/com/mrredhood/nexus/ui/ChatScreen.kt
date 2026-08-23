@@ -31,6 +31,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.mrredhood.nexus.core.ai.ChatContext
+import com.mrredhood.nexus.core.ai.ChatContextStore
 import com.mrredhood.nexus.core.model.NexusProject
 import com.mrredhood.nexus.core.workspace.Workspace
 
@@ -41,8 +42,11 @@ fun ChatScreen(project: NexusProject, workspace: Workspace, context: ChatContext
     val generating by vm.generating.collectAsStateWithLifecycle()
     val error by vm.error.collectAsStateWithLifecycle()
     val usage by vm.tokenUsage.collectAsStateWithLifecycle()
+    val liveContext by ChatContextStore.contexts.collectAsStateWithLifecycle()
     var input by remember { mutableStateOf("") }
     val listState = rememberLazyListState()
+
+    val workspaceContext = liveContext[workspace.id] ?: context
 
     LaunchedEffect(workspace.id) { vm.open(workspace.id) }
     LaunchedEffect(messages.size, messages.lastOrNull()?.content) {
@@ -90,7 +94,7 @@ fun ChatScreen(project: NexusProject, workspace: Workspace, context: ChatContext
                 enabled = !generating
             )
             IconButton(
-                onClick = { if (generating) vm.stop() else { vm.send(input, context); input = "" } }
+                onClick = { if (generating) vm.stop() else { vm.send(input, workspaceContext); input = "" } }
             ) {
                 Icon(if (generating) Icons.Outlined.Stop else Icons.Outlined.Send, if (generating) "Stop" else "Send")
             }
