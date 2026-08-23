@@ -105,7 +105,12 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         ))
     }
 
-    private fun contextItem(source: AIContextSource, label: String, content: String) = AIContextItem(source, label, content, AIContextService.estimateTokens(content))
+    private fun contextItem(source: AIContextSource, label: String, content: String): AIContextItem = AIContextItem(
+        source = source,
+        label = label,
+        content = content,
+        estimatedTokens = AIContextService.estimateTokens(content)
+    )
 
     private fun previewMutatingActions(proposals: List<NexusActionProposal>, targetWorkspace: Workspace) {
         viewModelScope.launch {
@@ -131,8 +136,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             inspectContext(prompt, context)
             val settings = NexusSettingsRuntime.current()
             val previous = _messages.value
-            val userMessage = ChatMessage("user", rawPrompt)
-            val history = previous + userMessage
+            val history = previous + ChatMessage("user", rawPrompt)
             val snapshot = _contextSnapshot.value
             val system = contextBuilder.build(context, snapshot) + "\n\n" + WORKSPACE_TOOL_INSTRUCTIONS
             val assistantIndex = history.size
@@ -144,39 +148,25 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 var finalResponse: com.mrredhood.nexus.core.ai.AiResponse? = null
                 var round = 0
                 var shouldContinue = true
-
                 while (shouldContinue && agentLoop.canContinue(round)) {
-                    val request = AiRequest(messages = buildList {
-                        add(AiMessage("system", system))
-                        addAll(providerMessages)
-                    }, model = "", stream = settings.aiStreaming && round == 0)
-
+                    val request = AiRequest(messages = buildList { add(AiMessage("system", system)); addAll(providerMessages) }, model = "", stream = settings.aiStreaming && round == 0)
                     val result = if (settings.aiStreaming && round == 0) {
-                        provider.stream(request) { delta ->
-                            finalText += delta
-                            updateAssistant(assistantIndex, finalText)
-                        }
+                        provider.stream(request) { delta -> finalText += delta; updateAssistant(assistantIndex, finalText) }
                     } else provider.complete(request)
-
                     if (!result.success) throw IllegalStateException(result.message.ifBlank { "AI request failed." })
                     finalResponse = result.response
                     finalText = result.response?.text ?: result.message
                     updateAssistant(assistantIndex, NexusActionProtocol.stripProtocol(finalText))
-
                     val proposals = NexusActionProtocol.extract(finalText)
                     _actionProposals.value = proposals
                     val activeWorkspace = workspace
-                    if (activeWorkspace == null || proposals.isEmpty()) {
-                        shouldContinue = false
-                    } else {
+                    if (activeWorkspace == null || proposals.isEmpty()) shouldContinue = false
+                    else {
                         val toolResults = agentLoop.collectReadOnlyResults(activeWorkspace, proposals)
                         val mutating = proposals.filter { NexusActionPolicy.requiresApproval(it.action) }
-                        if (mutating.isNotEmpty()) {
-                            previewMutatingActions(mutating, activeWorkspace)
-                            shouldContinue = false
-                        } else if (toolResults.isEmpty()) {
-                            shouldContinue = false
-                        } else {
+                        if (mutating.isNotEmpty()) { previewMutatingActions(mutating, activeWorkspace); shouldContinue = false }
+                        else if (toolResults.isEmpty()) shouldContinue = false
+                        else {
                             providerMessages += AiMessage("assistant", finalText)
                             toolResults.forEach { providerMessages += AiMessage("user", it.asPromptMessage()) }
                             round++
@@ -184,16 +174,11 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                         }
                     }
                 }
-
-                val current = _messages.value
-                val cleaned = current.toMutableList()
-                if (assistantIndex < cleaned.size && cleaned[assistantIndex].role == "assistant") cleaned[assistantIndex] = cleaned[assistantIndex].copy(content = NexusActionProtocol.stripProtocol(finalText))
-                _messages.value = cleaned
-                repository.save(id, cleaned)
-                _tokenUsage.value = TokenUsage(
-                    input = finalResponse?.inputTokens ?: estimateTokens(system + providerMessages.joinToString { it.content }),
-                    output = finalResponse?.outputTokens ?: estimateTokens(finalText)
-                )
+                val current = _messages.value.toMutableList()
+                if (assistantIndex < current.size && current[assistantIndex].role == "assistant") current[assistantIndex] = current[assistantIndex].copy(content = NexusActionProtocol.stripProtocol(finalText))
+                _messages.value = current
+                repository.save(id, current)
+                _tokenUsage.value = TokenUsage(finalResponse?.inputTokens ?: estimateTokens(system + providerMessages.joinToString { it.content }), finalResponse?.outputTokens ?: estimateTokens(finalText))
             } catch (cancelled: CancellationException) {
                 val current = _messages.value
                 if (current.lastOrNull()?.role == "assistant" && current.last().content.isNotBlank()) repository.save(id, current) else repository.save(id, history)
@@ -208,10 +193,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun updateAssistant(index: Int, content: String) {
         val current = _messages.value.toMutableList()
-        if (index < current.size && current[index].role == "assistant") {
-            current[index] = current[index].copy(content = content)
-            _messages.value = current
-        }
+        if (index < current.size && current[index].role == "assistant") { current[index] = current[index].copy(content = content); _messages.value = current }
     }
 
     private fun normalizeCommand(input: String): String {
@@ -232,22 +214,10 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun stop() { generationJob?.cancel(); generationJob = null; _generating.value = false }
-
-    fun clear() {
-        stop()
-        workspaceId?.let(repository::clear)
-        _messages.value = emptyList(); _actionProposals.value = emptyList(); _actionReviews.value = emptyMap(); _actionMessage.value = null; _error.value = null; _tokenUsage.value = TokenUsage(); _contextSnapshot.value = null
-    }
-
+    fun clear() { stop(); workspaceId?.let(repository::clear); _messages.value = emptyList(); _actionProposals.value = emptyList(); _actionReviews.value = emptyMap(); _actionMessage.value = null; _error.value = null; _tokenUsage.value = TokenUsage(); _contextSnapshot.value = null }
     fun clearError() { _error.value = null }
-
     fun rejectAction(id: String) { _actionProposals.value = _actionProposals.value.map { if (it.id == id) it.copy(status = NexusActionStatus.REJECTED) else it } }
-
-    fun openAction(id: String) {
-        val target = _actionProposals.value.firstOrNull { it.id == id } ?: return
-        val path = target.action.path ?: return
-        if (target.action.type == "open_file" || target.action.type == "focus_file") workspace?.let { NexusEditorActionBus.request(it.id, path, target.action.type == "focus_file") }
-    }
+    fun openAction(id: String) { val target = _actionProposals.value.firstOrNull { it.id == id } ?: return; val path = target.action.path ?: return; if (target.action.type == "open_file" || target.action.type == "focus_file") workspace?.let { NexusEditorActionBus.request(it.id, path, target.action.type == "focus_file") } }
 
     fun approveAction(id: String) {
         val target = _actionProposals.value.firstOrNull { it.id == id } ?: return
@@ -258,11 +228,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 val review = runCatching { actionExecutor.preview(targetWorkspace, target) }.getOrElse { _actionMessage.value = it.message ?: "Unable to prepare action review."; return@launch }
                 if (review != null) {
                     _actionReviews.value = _actionReviews.value + (id to review)
-                    if (!review.changed) {
-                        _actionProposals.value = _actionProposals.value.map { if (it.id == id) it.copy(status = NexusActionStatus.COMPLETED) else it }
-                        _actionMessage.value = "No changes to apply for ${review.path}."
-                        return@launch
-                    }
+                    if (!review.changed) { _actionProposals.value = _actionProposals.value.map { if (it.id == id) it.copy(status = NexusActionStatus.COMPLETED) else it }; _actionMessage.value = "No changes to apply for ${review.path}."; return@launch }
                 }
             }
             _actionProposals.value = _actionProposals.value.map { if (it.id == id) it.copy(status = NexusActionStatus.EXECUTING) else it }
@@ -276,18 +242,15 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun estimateTokens(text: String): Int = (text.length + 3) / 4
     override fun onCleared() { generationJob?.cancel(); super.onCleared() }
-
     companion object {
         private val MUTATING_ACTIONS = setOf("create_file", "create_directory", "patch_file", "replace_file", "delete_file", "rename_file", "copy_file", "move_file")
         private const val WORKSPACE_TOOL_INSTRUCTIONS = """
 You are Nexus, an AI software-engineering agent operating inside the user's currently opened workspace.
 Inspect the workspace through Nexus actions before making assumptions. Never claim a file was changed unless Nexus actually executed the action.
-
 Emit actions exactly as <nexus-action>{JSON}</nexus-action>.
 Supported actions: list_files, read_file, open_file, focus_file, create_file, create_directory, patch_file, replace_file, delete_file, rename_file, copy_file, move_file.
-Read/list/open/focus are automatically executed and their results are returned to you so you can continue the same turn. Mutating actions require explicit user approval.
-Use relative paths only. Never use absolute paths or '..'. Prefer patch_file for existing code so the user can review a diff. Use replace_file only when a complete replacement is safer.
-After an action result is returned, continue the task instead of asking the user to manually paste the result.
+Read/list/open/focus are automatically executed and their results are returned to you. Mutating actions require explicit user approval.
+Use relative paths only. Never use absolute paths or '..'. Prefer patch_file for existing code so the user can review a diff.
 """
     }
 }
