@@ -51,6 +51,7 @@ fun ChatScreen(project: NexusProject, workspace: Workspace, context: ChatContext
     val generating by vm.generating.collectAsStateWithLifecycle()
     val error by vm.error.collectAsStateWithLifecycle()
     val usage by vm.tokenUsage.collectAsStateWithLifecycle()
+    val contextSnapshot by vm.contextSnapshot.collectAsStateWithLifecycle()
     val proposals by vm.actionProposals.collectAsStateWithLifecycle()
     val reviews by vm.actionReviews.collectAsStateWithLifecycle()
     val actionMessage by vm.actionMessage.collectAsStateWithLifecycle()
@@ -58,11 +59,16 @@ fun ChatScreen(project: NexusProject, workspace: Workspace, context: ChatContext
     val androidContext = LocalContext.current
     val contextService = remember(androidContext) { WorkspaceContextService(WorkspaceFileSystem(androidContext.applicationContext)) }
     var input by remember { mutableStateOf("") }
+    var showContextInspector by remember { mutableStateOf(false) }
     val listState = rememberLazyListState()
     val workspaceContext = liveContexts[workspace.id] ?: context
 
     LaunchedEffect(workspace.id) { vm.open(workspace); runCatching { contextService.refresh(workspace) } }
     LaunchedEffect(messages.size, messages.lastOrNull()?.content) { if (messages.isNotEmpty()) listState.animateScrollToItem(messages.lastIndex) }
+
+    if (showContextInspector && contextSnapshot != null) {
+        AIContextInspector(snapshot = contextSnapshot!!, onDismiss = { showContextInspector = false })
+    }
 
     Column(Modifier.fillMaxSize().padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
@@ -70,6 +76,9 @@ fun ChatScreen(project: NexusProject, workspace: Workspace, context: ChatContext
                 Text("Nexus AI", style = MaterialTheme.typography.titleLarge)
                 Text(project.name, style = MaterialTheme.typography.bodySmall)
                 if (usage.total > 0) Text("Tokens: ${usage.total} (${usage.input} in / ${usage.output} out)", style = MaterialTheme.typography.labelSmall)
+            }
+            OutlinedButton(onClick = { showContextInspector = true }, enabled = contextSnapshot != null) {
+                Text("Context")
             }
             IconButton(onClick = vm::clear, enabled = !generating) { Icon(Icons.Outlined.DeleteSweep, "Clear chat") }
             onClose?.let { IconButton(onClick = it) { Text("×", style = MaterialTheme.typography.titleLarge) } }
