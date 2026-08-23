@@ -40,12 +40,11 @@ class WorkspaceFileSystem(private val context: Context) {
         require(size <= MAX_EDITABLE_FILE_BYTES) {
             "File is too large to edit in Nexus (${formatBytes(size)}). Maximum supported size is ${formatBytes(MAX_EDITABLE_FILE_BYTES)}."
         }
-        val bytes = resolver.openInputStream(document.uri)?.use { input ->
-            input.readBytes(MAX_EDITABLE_FILE_BYTES.toInt() + 1)
-        } ?: throw IOException("Unable to open file: $normalized")
+        val bytes = resolver.openInputStream(document.uri)?.use { it.readBytes() }
+            ?: throw IOException("Unable to open file: $normalized")
         require(bytes.size.toLong() <= MAX_EDITABLE_FILE_BYTES) { "File changed while reading and is too large to edit" }
         val content = bytes.toString(Charsets.UTF_8)
-        WorkspaceFile(normalized, document.name ?: leaf(normalized), content, size, document.lastModified().coerceAtLeast(0L), document.type)
+        WorkspaceFile(normalized, document.name ?: leaf(normalized), content, bytes.size.toLong(), document.lastModified().coerceAtLeast(0L), document.type)
     }
 
     suspend fun write(workspace: Workspace, relativePath: String, content: String, mimeType: String = "text/plain"): WorkspaceFile =
