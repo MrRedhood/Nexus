@@ -25,6 +25,28 @@ class AiProviderService(context: Context) {
         execute(request, true, onDelta)
     }
 
+    /** Performs a minimal authenticated request using the currently configured provider. */
+    suspend fun testConnection(): ConnectionTestResult = withContext(Dispatchers.IO) {
+        val config = settings.settings.first()
+        val provider = config.provider.trim()
+        val key = keys.get(provider)
+            ?: return@withContext ConnectionTestResult(false, "No API key configured for $provider.")
+        val model = resolveModel(provider, "", config.model)
+        if (model.isBlank()) return@withContext ConnectionTestResult(false, "No model configured for $provider.")
+
+        runCatching {
+            val request = AiRequest(
+                messages = listOf(AiMessage("user", "Reply with OK.")),
+                model = model,
+                temperature = 0.0,
+                maxOutputTokens = 8
+            )
+            val result = execute(request, false) { }
+            if (result.success) ConnectionTestResult(true, "Connection successful with $provider / $model.")
+            else ConnectionTestResult(false, result.error ?: "Connection failed.")
+        }.getOrElse { ConnectionTestResult(false, it.message ?: "Connection failed.") }
+    }
+
     private suspend fun execute(request: AiRequest, streaming: Boolean, onDelta: suspend (String) -> Unit): ProviderResult {
         val config = settings.settings.first()
         val provider = config.provider.trim()
@@ -111,6 +133,9 @@ class AiProviderService(context: Context) {
         provider.equals("DeepInfra", true) -> "meta-llama/Llama-3.3-70B-Instruct"
         else -> ""
     }
+
     private fun encode(v: String) = URLEncoder.encode(v, Charsets.UTF_8.name()).replace("+", "%20")
     private fun JSONObject.optIntOrNull(vararg names: String): Int? = names.firstOrNull { has(it) && !isNull(it) }?.let { optInt(it) }
 }
+
+data class ConnectionTestResult(val success: Boolean, val message: String)
