@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -17,11 +18,15 @@ import androidx.compose.material.icons.outlined.Stop
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -41,8 +46,12 @@ import com.mrredhood.nexus.core.ai.NexusActionStatus
 import com.mrredhood.nexus.core.ai.NexusDiffKind
 import com.mrredhood.nexus.core.ai.WorkspaceContextService
 import com.mrredhood.nexus.core.model.NexusProject
+import com.mrredhood.nexus.core.settings.AdvancedSettingsRepository
+import com.mrredhood.nexus.core.settings.NexusFeatureSettings
 import com.mrredhood.nexus.core.workspace.Workspace
 import com.mrredhood.nexus.core.workspace.WorkspaceFileSystem
+
+private val NEXUS_COMMANDS = listOf("/explain", "/fix", "/refactor", "/optimize", "/test", "/build", "/search", "/open")
 
 @Composable
 fun ChatScreen(project: NexusProject, workspace: Workspace, context: ChatContext = ChatContext(), onClose: (() -> Unit)? = null) {
@@ -57,38 +66,63 @@ fun ChatScreen(project: NexusProject, workspace: Workspace, context: ChatContext
     val actionMessage by vm.actionMessage.collectAsStateWithLifecycle()
     val liveContexts by ChatContextStore.contexts.collectAsStateWithLifecycle()
     val androidContext = LocalContext.current
+    val featureSettings by remember(androidContext) { AdvancedSettingsRepository(androidContext.applicationContext).settings }
+        .collectAsStateWithLifecycle(initialValue = NexusFeatureSettings())
     val contextService = remember(androidContext) { WorkspaceContextService(WorkspaceFileSystem(androidContext.applicationContext)) }
     var input by remember { mutableStateOf("") }
     var showContextInspector by remember { mutableStateOf(false) }
+    var showModelMenu by remember { mutableStateOf(false) }
     val listState = rememberLazyListState()
     val workspaceContext = liveContexts[workspace.id] ?: context
 
-    LaunchedEffect(workspace.id) { vm.open(workspace); runCatching { contextService.refresh(workspace) } }
-    LaunchedEffect(messages.size, messages.lastOrNull()?.content) { if (messages.isNotEmpty()) listState.animateScrollToItem(messages.lastIndex) }
+    LaunchedEffect(workspace.id) {
+        vm.open(workspace)
+        runCatching { contextService.refresh(workspace) }
+    }
+    LaunchedEffect(messages.size, messages.lastOrNull()?.content) {
+        if (messages.isNotEmpty()) listState.animateScrollToItem(messages.lastIndex)
+    }
 
     if (showContextInspector && contextSnapshot != null) {
         AIContextInspector(snapshot = contextSnapshot!!, onDismiss = { showContextInspector = false })
     }
 
     Column(Modifier.fillMaxSize().padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            Column(Modifier.weight(1f)) {
-                Text("Nexus AI", style = MaterialTheme.typography.titleLarge)
-                Text(project.name, style = MaterialTheme.typography.bodySmall)
-                if (usage.total > 0) Text("Tokens: ${usage.total} (${usage.input} in / ${usage.output} out)", style = MaterialTheme.typography.labelSmall)
+        Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHighest)) {
+            Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Nexus AI", style = MaterialTheme.typography.titleLarge)
+                        Text(project.name, style = MaterialTheme.typography.bodySmall)
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Surface(shape = MaterialTheme.shapes.small) {
+                            Text("${featureSettings.provider} · ${featureSettings.model}", modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp), style = MaterialTheme.typography.labelMedium)
+                        }
+                        IconButton(onClick = vm::clear, enabled = !generating) { Icon(Icons.Outlined.DeleteSweep, "Clear chat") }
+                        onClose?.let { IconButton(onClick = it) { Text("×", style = MaterialTheme.typography.titleLarge) } }
+                    }
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(onClick = { showContextInspector = true }, enabled = contextSnapshot != null) { Text("Context") }
+                    FilterChip(selected = true, onClick = { showModelMenu = true }, label = { Text("Model") })
+                    DropdownMenu(expanded = showModelMenu, onDismissRequest = { showModelMenu = false }) {
+                        DropdownMenuItem(text = { Text(featureSettings.model) }, onClick = { showModelMenu = false })
+                        DropdownMenuItem(text = { Text("Change model in AI Provider settings") }, onClick = { showModelMenu = false })
+                    }
+                    if (usage.total > 0) Text("${usage.total} tokens", style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(top = 10.dp))
+                }
             }
-            OutlinedButton(onClick = { showContextInspector = true }, enabled = contextSnapshot != null) {
-                Text("Context")
-            }
-            IconButton(onClick = vm::clear, enabled = !generating) { Icon(Icons.Outlined.DeleteSweep, "Clear chat") }
-            onClose?.let { IconButton(onClick = it) { Text("×", style = MaterialTheme.typography.titleLarge) } }
         }
 
         LazyColumn(state = listState, modifier = Modifier.weight(1f).fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             items(messages) { message ->
                 val assistant = message.role == "assistant"
                 Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = if (assistant) MaterialTheme.colorScheme.surfaceContainerHighest else MaterialTheme.colorScheme.primaryContainer)) {
-                    Text(message.content.ifBlank { "…" }, Modifier.padding(14.dp))
+                    Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text(if (assistant) "Nexus" else "You", style = MaterialTheme.typography.labelMedium)
+                        Text(message.content.ifBlank { "Thinking…" })
+                    }
                 }
             }
 
@@ -104,16 +138,13 @@ fun ChatScreen(project: NexusProject, workspace: Workspace, context: ChatContext
                                 Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                     Text(action.type.replace('_', ' ').replaceFirstChar { it.uppercase() }, style = MaterialTheme.typography.titleSmall)
                                     action.path?.let { Text(it, style = MaterialTheme.typography.bodyMedium) }
-
                                     if (review != null) {
                                         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                                            Text("+${review.additions}", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelMedium)
-                                            Text("-${review.deletions}", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.labelMedium)
-                                            Text(if (review.changed) "Changes ready for review" else "No changes", style = MaterialTheme.typography.labelMedium)
+                                            Text("+${review.additions}", style = MaterialTheme.typography.labelMedium)
+                                            Text("-${review.deletions}", style = MaterialTheme.typography.labelMedium)
+                                            Text(if (review.changed) "Changes ready" else "No changes", style = MaterialTheme.typography.labelMedium)
                                         }
-                                        OutlinedButton(onClick = { expanded = !expanded }, enabled = review.changed) {
-                                            Text(if (expanded) "Hide diff" else "Review diff")
-                                        }
+                                        OutlinedButton(onClick = { expanded = !expanded }, enabled = review.changed) { Text(if (expanded) "Hide diff" else "Review diff") }
                                         if (expanded) {
                                             Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHighest)) {
                                                 Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
@@ -127,25 +158,17 @@ fun ChatScreen(project: NexusProject, workspace: Workspace, context: ChatContext
                                     } else if (NexusActionPolicy.requiresApproval(action)) {
                                         Text("Preparing a safe change preview…", style = MaterialTheme.typography.bodySmall)
                                     }
-
                                     when (proposal.status) {
-                                        NexusActionStatus.PROPOSED, NexusActionStatus.APPROVED -> {
-                                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                                if (action.type == "open_file" || action.type == "focus_file") {
-                                                    OutlinedButton(onClick = { vm.openAction(proposal.id) }) { Icon(Icons.Outlined.OpenInNew, null); Text("Open") }
-                                                }
-                                                if (NexusActionPolicy.requiresApproval(action)) {
-                                                    Button(onClick = { vm.approveAction(proposal.id) }, enabled = review?.changed != false) { Text("Apply") }
-                                                } else if (action.type != "open_file" && action.type != "focus_file") {
-                                                    Button(onClick = { vm.approveAction(proposal.id) }) { Text("Approve") }
-                                                }
-                                                OutlinedButton(onClick = { vm.rejectAction(proposal.id) }) { Text("Reject") }
-                                            }
+                                        NexusActionStatus.PROPOSED, NexusActionStatus.APPROVED -> Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                            if (action.type == "open_file" || action.type == "focus_file") OutlinedButton(onClick = { vm.openAction(proposal.id) }) { Icon(Icons.Outlined.OpenInNew, null); Text("Open") }
+                                            if (NexusActionPolicy.requiresApproval(action)) Button(onClick = { vm.approveAction(proposal.id) }, enabled = review?.changed != false) { Text("Apply") }
+                                            else if (action.type != "open_file" && action.type != "focus_file") Button(onClick = { vm.approveAction(proposal.id) }) { Text("Approve") }
+                                            OutlinedButton(onClick = { vm.rejectAction(proposal.id) }) { Text("Reject") }
                                         }
-                                        NexusActionStatus.EXECUTING -> Text("Applying…", style = MaterialTheme.typography.bodySmall)
-                                        NexusActionStatus.COMPLETED -> Text("Applied", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.bodySmall)
-                                        NexusActionStatus.REJECTED -> Text("Rejected", style = MaterialTheme.typography.bodySmall)
-                                        NexusActionStatus.FAILED -> Text("Failed", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+                                        NexusActionStatus.EXECUTING -> Text("Applying…")
+                                        NexusActionStatus.COMPLETED -> Text("Applied", color = MaterialTheme.colorScheme.primary)
+                                        NexusActionStatus.REJECTED -> Text("Rejected")
+                                        NexusActionStatus.FAILED -> Text("Failed", color = MaterialTheme.colorScheme.error)
                                     }
                                 }
                             }
@@ -157,8 +180,23 @@ fun ChatScreen(project: NexusProject, workspace: Workspace, context: ChatContext
             error?.let { message -> item { Text(message, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(8.dp)) } }
         }
 
+        if (input.startsWith("/")) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                NEXUS_COMMANDS.filter { it.startsWith(input.substringBefore(' '), ignoreCase = true) }.take(5).forEach { command ->
+                    FilterChip(selected = false, onClick = { input = "$command " }, label = { Text(command) })
+                }
+            }
+        }
+
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedTextField(value = input, onValueChange = { input = it }, modifier = Modifier.weight(1f), placeholder = { Text("Ask Nexus about your code…") }, maxLines = 5, enabled = !generating)
+            OutlinedTextField(
+                value = input,
+                onValueChange = { input = it },
+                modifier = Modifier.weight(1f).heightIn(min = 52.dp, max = 150.dp),
+                placeholder = { Text("Ask Nexus about your code…  @file  /command") },
+                maxLines = 6,
+                enabled = !generating
+            )
             IconButton(onClick = { if (generating) vm.stop() else { vm.send(input, workspaceContext); input = "" } }) {
                 Icon(if (generating) Icons.Outlined.Stop else Icons.Outlined.Send, if (generating) "Stop" else "Send")
             }
