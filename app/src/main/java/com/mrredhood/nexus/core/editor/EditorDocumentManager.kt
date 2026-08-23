@@ -14,9 +14,7 @@ class EditorDocumentManager {
     suspend fun open(workspaceId: String, file: WorkspaceFile): EditorDocument = mutex.withLock {
         val key = DocumentKey(workspaceId, file.relativePath)
         val existing = documents[key]
-        val document = if (existing == null) EditorDocument.from(workspaceId, file)
-        else if (existing.isDirty) existing
-        else existing.synchronizedWith(file)
+        val document = if (existing == null) EditorDocument.from(workspaceId, file) else if (existing.isDirty) existing else existing.synchronizedWith(file)
         documents[key] = document
         recentlyClosed.remove(key)
         activeKey = key
@@ -29,10 +27,7 @@ class EditorDocumentManager {
     }
 
     suspend fun active(): EditorDocument? = mutex.withLock { activeKey?.let(documents::get) }
-
-    suspend fun get(workspaceId: String, relativePath: String): EditorDocument? = mutex.withLock {
-        documents[DocumentKey(workspaceId, relativePath)]
-    }
+    suspend fun get(workspaceId: String, relativePath: String): EditorDocument? = mutex.withLock { documents[DocumentKey(workspaceId, relativePath)] }
 
     suspend fun update(workspaceId: String, relativePath: String, content: String): EditorDocument? = mutex.withLock {
         val key = DocumentKey(workspaceId, relativePath)
@@ -52,17 +47,9 @@ class EditorDocumentManager {
         updated
     }
 
-    suspend fun markSaving(workspaceId: String, relativePath: String): EditorDocument? = mutex.withLock {
-        updateLocked(workspaceId, relativePath) { it.markSaving() }
-    }
-
-    suspend fun markConflict(workspaceId: String, relativePath: String, message: String = EditorDocument.DEFAULT_CONFLICT_MESSAGE): EditorDocument? = mutex.withLock {
-        updateLocked(workspaceId, relativePath) { it.markConflict(message) }
-    }
-
-    suspend fun markError(workspaceId: String, relativePath: String, message: String): EditorDocument? = mutex.withLock {
-        updateLocked(workspaceId, relativePath) { it.markError(message) }
-    }
+    suspend fun markSaving(workspaceId: String, relativePath: String): EditorDocument? = mutex.withLock { updateLocked(workspaceId, relativePath) { it.markSaving() } }
+    suspend fun markConflict(workspaceId: String, relativePath: String, message: String = EditorDocument.DEFAULT_CONFLICT_MESSAGE): EditorDocument? = mutex.withLock { updateLocked(workspaceId, relativePath) { it.markConflict(message) } }
+    suspend fun markError(workspaceId: String, relativePath: String, message: String): EditorDocument? = mutex.withLock { updateLocked(workspaceId, relativePath) { it.markError(message) } }
 
     suspend fun synchronize(workspaceId: String, file: WorkspaceFile): EditorDocument = mutex.withLock {
         val key = DocumentKey(workspaceId, file.relativePath)
@@ -72,11 +59,45 @@ class EditorDocumentManager {
         document
     }
 
+    suspend fun relocate(workspaceId: String, oldPath: String, newPath: String, newName: String): EditorDocument? = mutex.withLock {
+        val oldKey = DocumentKey(workspaceId, oldPath)
+        val current = documents.remove(oldKey) ?: return@withLock null
+        val newKey = DocumentKey(workspaceId, newPath)
+        val relocated = current.copy(relativePath = newPath, name = newName)
+        documents[newKey] = relocated
+        if (activeKey == oldKey) activeKey = newKey
+        relocated
+    }
+
+    suspend fun relocateTree(workspaceId: String, oldPrefix: String, newPrefix: String) = mutex.withLock {
+        val matches = documents.filterKeys { it.workspaceId == workspaceId && (it.relativePath == oldPrefix || it.relativePath.startsWith("$oldPrefix/")) }
+        matches.forEach { (oldKey, document) ->
+            val suffix = oldKey.relativePath.removePrefix(oldPrefix).trimStart('/')
+            val newPath = if (suffix.isBlank()) newPrefix else "$newPrefix/$suffix"
+            val newKey = DocumentKey(workspaceId, newPath)
+            documents.remove(oldKey)
+            documents[newKey] = document.copy(relativePath = newPath, name = newPath.substringAfterLast('/'))
+            if (activeKey == oldKey) activeKey = newKey
+        }
+    }
+
+    suspend fun remove(workspaceId: String, relativePath: String) = mutex.withLock {
+        val key = DocumentKey(workspaceId, relativePath)
+        documents.remove(key)
+        if (activeKey == key) activeKey = chooseAdjacentKey(key)
+    }
+
+    suspend fun removeTree(workspaceId: String, prefix: String) = mutex.withLock {
+        val keys = documents.keys.filter { it.workspaceId == workspaceId && (it.relativePath == prefix || it.relativePath.startsWith("$prefix/")) }
+        documents.keys.removeAll(keys.toSet())
+        if (activeKey?.workspaceId == workspaceId && activeKey?.relativePath?.let { it == prefix || it.startsWith("$prefix/") } == true) activeKey = documents.keys.lastOrNull { it.workspaceId == workspaceId }
+    }
+
     suspend fun close(workspaceId: String, relativePath: String): EditorDocument? = mutex.withLock {
         val key = DocumentKey(workspaceId, relativePath)
         val removed = documents.remove(key) ?: return@withLock null
         recentlyClosed[key] = removed
-        while (recentlyClosed.size > MAX_RECENTLY_CLOSED) recentlyClosed.remove(recentlyClosed.keys.first())
+        trimRecentlyClosed()
         if (activeKey == key) activeKey = chooseAdjacentKey(key)
         removed
     }
@@ -92,7 +113,6 @@ class EditorDocumentManager {
     }
 
     suspend fun closeAll(workspaceId: String): List<EditorDocument> = closeWorkspace(workspaceId)
-
     suspend fun closeWorkspace(workspaceId: String): List<EditorDocument> = mutex.withLock {
         val removed = documents.filterKeys { it.workspaceId == workspaceId }.values.toList()
         removed.forEach { recentlyClosed[DocumentKey(it.workspaceId, it.relativePath)] = it }
@@ -120,24 +140,12 @@ class EditorDocumentManager {
     }
 
     suspend fun all(): List<EditorDocument> = mutex.withLock { documents.values.toList() }
-
     suspend fun dirtyDocuments(): List<EditorDocument> = mutex.withLock { documents.values.filter(EditorDocument::isDirty) }
-
-    suspend fun hasUnsavedChanges(workspaceId: String? = null): Boolean = mutex.withLock {
-        documents.values.any { document -> (workspaceId == null || document.workspaceId == workspaceId) && document.isDirty }
-    }
-
+    suspend fun hasUnsavedChanges(workspaceId: String? = null): Boolean = mutex.withLock { documents.values.any { (workspaceId == null || it.workspaceId == workspaceId) && it.isDirty } }
     suspend fun activeKey(): Pair<String, String>? = mutex.withLock { activeKey?.let { it.workspaceId to it.relativePath } }
 
-    private fun chooseAdjacentKey(closedKey: DocumentKey): DocumentKey? {
-        val keys = documents.keys.filter { it.workspaceId == closedKey.workspaceId }
-        return keys.lastOrNull()
-    }
-
-    private fun trimRecentlyClosed() {
-        while (recentlyClosed.size > MAX_RECENTLY_CLOSED) recentlyClosed.remove(recentlyClosed.keys.first())
-    }
-
+    private fun chooseAdjacentKey(closedKey: DocumentKey): DocumentKey? = documents.keys.filter { it.workspaceId == closedKey.workspaceId }.lastOrNull()
+    private fun trimRecentlyClosed() { while (recentlyClosed.size > MAX_RECENTLY_CLOSED) recentlyClosed.remove(recentlyClosed.keys.first()) }
     private fun updateLocked(workspaceId: String, relativePath: String, transform: (EditorDocument) -> EditorDocument): EditorDocument? {
         val key = DocumentKey(workspaceId, relativePath)
         val current = documents[key] ?: return null
@@ -148,8 +156,5 @@ class EditorDocumentManager {
     }
 
     private data class DocumentKey(val workspaceId: String, val relativePath: String)
-
-    companion object {
-        private const val MAX_RECENTLY_CLOSED = 20
-    }
+    companion object { private const val MAX_RECENTLY_CLOSED = 20 }
 }
