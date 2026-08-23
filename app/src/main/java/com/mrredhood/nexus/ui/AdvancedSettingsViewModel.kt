@@ -3,6 +3,7 @@ package com.mrredhood.nexus.ui
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.mrredhood.nexus.core.ai.AiProviderService
 import com.mrredhood.nexus.core.settings.AdvancedSettingsRepository
 import com.mrredhood.nexus.core.settings.ApiKeyStore
 import com.mrredhood.nexus.core.settings.NexusFeatureSettings
@@ -14,6 +15,7 @@ import kotlinx.coroutines.launch
 class AdvancedSettingsViewModel(application: Application) : AndroidViewModel(application) {
     private val repository = AdvancedSettingsRepository(application.applicationContext)
     private val apiKeys = ApiKeyStore(application.applicationContext)
+    private val aiService = AiProviderService(application.applicationContext)
 
     val settings: StateFlow<NexusFeatureSettings> = repository.settings.stateIn(
         viewModelScope, SharingStarted.WhileSubscribed(5_000), NexusFeatureSettings()
@@ -34,4 +36,11 @@ class AdvancedSettingsViewModel(application: Application) : AndroidViewModel(app
     }
 
     fun hasApiKey(provider: String): Boolean = apiKeys.has(provider)
+
+    fun testConnection(onResult: (Boolean, String) -> Unit) {
+        viewModelScope.launch {
+            val result = aiService.testConnection()
+            onResult(result.success, result.message)
+        }
+    }
 }
