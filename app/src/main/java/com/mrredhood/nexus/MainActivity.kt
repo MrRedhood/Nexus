@@ -24,7 +24,6 @@ import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Description
 import androidx.compose.material.icons.outlined.Folder
 import androidx.compose.material.icons.outlined.FolderOpen
-import androidx.compose.material.icons.outlined.MoreVert
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material3.AlertDialog
@@ -41,14 +40,13 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
 import androidx.documentfile.provider.DocumentFile
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -56,6 +54,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.mrredhood.nexus.core.model.NexusProject
 import com.mrredhood.nexus.core.workspace.EntryType
 import com.mrredhood.nexus.core.workspace.Workspace
+import com.mrredhood.nexus.core.workspace.WorkspaceEntry
 import com.mrredhood.nexus.ui.NexusViewModel
 import com.mrredhood.nexus.ui.NexusViewModelFactory
 import com.mrredhood.nexus.ui.WorkspaceViewModel
@@ -78,44 +77,49 @@ class MainActivity : ComponentActivity() {
 private fun NexusApp(vm: NexusViewModel) {
     val projects by vm.projects.collectAsStateWithLifecycle()
     val workspaces by vm.workspaces.collectAsStateWithLifecycle()
-    var selectedId by remember { mutableStateOf<String?>(null) }
-    val selected = projects.firstOrNull { it.id == selectedId }
-    val selectedWorkspace = selected?.let { project -> workspaces.firstOrNull { it.projectId == project.id } }
-    val folderPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri: Uri? ->
-        pendingWorkspaceSelection?.invoke(uri)
-        pendingWorkspaceSelection = null
+    var selectedProjectId by remember { mutableStateOf<String?>(null) }
+    var pickerCallback by remember { mutableStateOf<((Uri?) -> Unit)?>(null) }
+    val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
+        pickerCallback?.invoke(uri)
+        pickerCallback = null
     }
+    fun chooseFolder(callback: (Uri?) -> Unit) {
+        pickerCallback = callback
+        picker.launch(null)
+    }
+
+    val project = projects.firstOrNull { it.id == selectedProjectId }
+    val workspace = project?.let { p -> workspaces.firstOrNull { it.projectId == p.id } }
 
     Surface(Modifier.fillMaxSize()) {
-        if (selected == null) HomeScreen(projects, vm, onOpen = { selectedId = it }, onPickWorkspace = { callback -> pendingWorkspaceSelection = callback; folderPicker.launch(null) })
-        else if (selectedWorkspace != null) ProjectScreen(selected, selectedWorkspace, onBack = { selectedId = null })
-        else WorkspaceMissingScreen(selected, vm, onBack = { selectedId = null }, onPickWorkspace = { callback -> pendingWorkspaceSelection = callback; folderPicker.launch(null) })
+        when {
+            project == null -> HomeScreen(projects, vm, ::chooseFolder) { selectedProjectId = it }
+            workspace == null -> MissingWorkspaceScreen(project, vm, ::chooseFolder) { selectedProjectId = null }
+            else -> WorkspaceScreen(project, workspace) { selectedProjectId = null }
+        }
     }
 }
-
-private var pendingWorkspaceSelection: ((Uri?) -> Unit)? = null
 
 @Composable
 private fun HomeScreen(
     projects: List<NexusProject>,
     vm: NexusViewModel,
-    onOpen: (String) -> Unit,
-    onPickWorkspace: (((Uri?) -> Unit)) -> Unit
+    chooseFolder: ((Uri?) -> Unit) -> Unit,
+    onOpen: (String) -> Unit
 ) {
-    var showCreate by remember { mutableStateOf(false) }
+    var create by remember { mutableStateOf(false) }
     Scaffold(topBar = {
         TopAppBar(title = { Text("Nexus") }, actions = {
-            IconButton(onClick = { showCreate = true }) { Icon(Icons.Outlined.Add, "Create project") }
+            IconButton(onClick = { create = true }) { Icon(Icons.Outlined.Add, "Create project") }
         })
     }) { padding ->
         LazyColumn(Modifier.fillMaxSize().padding(padding).padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             item {
-                Spacer(Modifier.height(8.dp))
                 Card(shape = MaterialTheme.shapes.extraLarge, colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHighest)) {
                     Column(Modifier.padding(20.dp)) {
                         Text("Workspace", style = MaterialTheme.typography.headlineSmall)
                         Spacer(Modifier.height(8.dp))
-                        Text("Nexus uses Android's document provider for durable, user-selected workspaces. Files stay under the location you explicitly grant.", style = MaterialTheme.typography.bodyMedium)
+                        Text("Select a folder and Nexus will persist access through Android's Storage Access Framework. No broad storage permission is required.")
                     }
                 }
             }
@@ -125,10 +129,8 @@ private fun HomeScreen(
                     Card(shape = MaterialTheme.shapes.large) {
                         Column(Modifier.padding(20.dp)) {
                             Text("No projects yet", style = MaterialTheme.typography.titleMedium)
-                            Spacer(Modifier.height(6.dp))
-                            Text("Create a project and select its workspace folder.")
-                            Spacer(Modifier.height(14.dp))
-                            FilledTonalButton(onClick = { showCreate = true }) { Icon(Icons.Outlined.Add, null); Spacer(Modifier.padding(3.dp)); Text("Create project") }
+                            Text("Create a project and choose its workspace folder.", modifier = Modifier.padding(top = 6.dp))
+                            FilledTonalButton(onClick = { create = true }, modifier = Modifier.padding(top = 14.dp)) { Icon(Icons.Outlined.Add, null); Spacer(Modifier.padding(3.dp)); Text("Create project") }
                         }
                     }
                 }
@@ -151,84 +153,89 @@ private fun HomeScreen(
                         Icon(Icons.Outlined.Settings, null)
                         Column {
                             Text("Foundation", style = MaterialTheme.typography.titleMedium)
-                            Text("Material 3 · API 36 · SAF workspace · persistent metadata", style = MaterialTheme.typography.bodySmall)
+                            Text("Material 3 · API 36 · SAF · persistent workspace metadata", style = MaterialTheme.typography.bodySmall)
                         }
                     }
                 }
-                Spacer(Modifier.height(24.dp))
+                Spacer(Modifier.height(20.dp))
             }
         }
     }
-    if (showCreate) CreateProjectDialog(
-        onDismiss = { showCreate = false },
-        onPickWorkspace = { callback -> onPickWorkspace(callback) },
-        onCreate = { name, repo, uri ->
-            if (uri != null) {
-                val displayName = DocumentFile.fromTreeUri(androidx.compose.ui.platform.LocalContext.current, uri)?.name ?: name
-                vm.createProject(name, repo, uri, displayName) { showCreate = false }
+    if (create) {
+        CreateProjectDialog(
+            chooseFolder = chooseFolder,
+            onDismiss = { create = false },
+            onCreate = { name, repository, uri ->
+                if (uri != null) {
+                    val displayName = DocumentFile.fromTreeUri(androidx.compose.ui.platform.LocalContext.current, uri)?.name ?: name
+                    vm.createProject(name, repository, uri, displayName) { create = false }
+                }
             }
-        }
-    )
+        )
+    }
 }
 
 @Composable
 private fun CreateProjectDialog(
+    chooseFolder: ((Uri?) -> Unit) -> Unit,
     onDismiss: () -> Unit,
-    onPickWorkspace: (((Uri?) -> Unit)) -> Unit,
-    onCreate: (String, String?, Uri?) -> Unit
+    onCreate: (String, String?, Uri) -> Unit
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
     var name by remember { mutableStateOf("") }
-    var repo by remember { mutableStateOf("") }
-    var workspaceUri by remember { mutableStateOf<Uri?>(null) }
-    var workspaceName by remember { mutableStateOf("") }
+    var repository by remember { mutableStateOf("") }
+    var uri by remember { mutableStateOf<Uri?>(null) }
+    var folderName by remember { mutableStateOf("") }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Create project") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                OutlinedTextField(value = name, onValueChange = { name = it }, label = { Text("Project name") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                OutlinedTextField(value = repo, onValueChange = { repo = it }, label = { Text("GitHub repository (optional)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(name, { name = it }, label = { Text("Project name") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(repository, { repository = it }, label = { Text("GitHub repository (optional)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
                 Card(shape = MaterialTheme.shapes.large) {
                     Column(Modifier.fillMaxWidth().padding(14.dp)) {
-                        Text("Workspace", style = MaterialTheme.typography.titleSmall)
-                        Text(if (workspaceName.isBlank()) "Select a folder" else workspaceName, style = MaterialTheme.typography.bodyMedium)
-                        Spacer(Modifier.height(8.dp))
+                        Text("Workspace folder", style = MaterialTheme.typography.titleSmall)
+                        Text(folderName.ifBlank { "No folder selected" }, style = MaterialTheme.typography.bodyMedium)
                         FilledTonalButton(onClick = {
-                            onPickWorkspace { uri ->
-                                workspaceUri = uri
-                                workspaceName = uri?.let { DocumentFile.fromTreeUri(context, it)?.name ?: "Selected folder" } ?: ""
+                            chooseFolder { selected ->
+                                uri = selected
+                                folderName = selected?.let { DocumentFile.fromTreeUri(context, it)?.name ?: "Selected folder" } ?: ""
                             }
-                        }) { Icon(Icons.Outlined.FolderOpen, null); Spacer(Modifier.padding(3.dp)); Text("Choose folder") }
+                        }, modifier = Modifier.padding(top = 8.dp)) {
+                            Icon(Icons.Outlined.FolderOpen, null); Spacer(Modifier.padding(3.dp)); Text("Choose folder")
+                        }
                     }
                 }
             }
         },
-        confirmButton = { FilledTonalButton(enabled = name.isNotBlank() && workspaceUri != null, onClick = { onCreate(name, repo.trim().ifBlank { null }, workspaceUri) }) { Text("Create") } },
+        confirmButton = { FilledTonalButton(enabled = name.isNotBlank() && uri != null, onClick = { onCreate(name.trim(), repository.trim().ifBlank { null }, uri!!) }) { Text("Create") } },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
     )
 }
 
 @Composable
-private fun WorkspaceMissingScreen(project: NexusProject, vm: NexusViewModel, onBack: () -> Unit, onPickWorkspace: (((Uri?) -> Unit)) -> Unit) {
+private fun MissingWorkspaceScreen(project: NexusProject, vm: NexusViewModel, chooseFolder: ((Uri?) -> Unit) -> Unit, onBack: () -> Unit) {
     Scaffold(topBar = { TopAppBar(title = { Text(project.name) }, navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.Outlined.ArrowBack, "Back") } }) }) { padding ->
         Card(Modifier.fillMaxWidth().padding(padding).padding(16.dp), shape = MaterialTheme.shapes.large) {
             Column(Modifier.padding(20.dp)) {
                 Text("Workspace unavailable", style = MaterialTheme.typography.titleLarge)
-                Text("The previously selected folder is no longer accessible. Select a new workspace folder.", modifier = Modifier.padding(top = 8.dp))
-                Spacer(Modifier.height(14.dp))
+                Text("Nexus no longer has access to the selected folder. Reconnect the project to a folder.", modifier = Modifier.padding(top = 8.dp))
                 FilledTonalButton(onClick = {
-                    onPickWorkspace { uri ->
-                        if (uri != null) vm.createProject(project.name, project.repository, uri, project.name) { }
+                    chooseFolder { uri ->
+                        if (uri != null) {
+                            val name = DocumentFile.fromTreeUri(androidx.compose.ui.platform.LocalContext.current, uri)?.name ?: project.name
+                            vm.attachWorkspace(project, uri, name)
+                        }
                     }
-                }) { Text("Select workspace") }
+                }, modifier = Modifier.padding(top = 14.dp)) { Text("Reconnect workspace") }
             }
         }
     }
 }
 
 @Composable
-private fun ProjectScreen(project: NexusProject, workspace: Workspace, onBack: () -> Unit) {
+private fun WorkspaceScreen(project: NexusProject, workspace: Workspace, onBack: () -> Unit) {
     val context = androidx.compose.ui.platform.LocalContext.current
     val vm: WorkspaceViewModel = viewModel(factory = WorkspaceViewModelFactory(context))
     val entries by vm.entries.collectAsStateWithLifecycle()
@@ -236,30 +243,29 @@ private fun ProjectScreen(project: NexusProject, workspace: Workspace, onBack: (
     val loading by vm.loading.collectAsStateWithLifecycle()
     val error by vm.error.collectAsStateWithLifecycle()
     val openedFile by vm.openedFile.collectAsStateWithLifecycle()
-    var showCreateMenu by remember { mutableStateOf(false) }
-    var createFolder by remember { mutableStateOf(false) }
-    var createName by remember { mutableStateOf("") }
+    var createDialog by remember { mutableStateOf<String?>(null) }
 
-    androidx.compose.runtime.LaunchedEffect(workspace.id) { vm.open(workspace) }
+    LaunchedEffect(workspace.id) { vm.open(workspace) }
 
     Scaffold(topBar = {
         TopAppBar(
             title = { Column { Text(project.name); Text(if (currentPath.isBlank()) workspace.displayName else currentPath, style = MaterialTheme.typography.labelSmall) } },
             navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.Outlined.ArrowBack, "Back") } },
             actions = {
-                IconButton(onClick = { vm.refresh(workspace) }) { Icon(Icons.Outlined.Refresh, "Refresh workspace") }
-                IconButton(onClick = { showCreateMenu = true }) { Icon(Icons.Outlined.Add, "Create") }
+                IconButton(onClick = { vm.refresh(workspace) }) { Icon(Icons.Outlined.Refresh, "Refresh") }
+                IconButton(onClick = { createDialog = "file" }) { Icon(Icons.Outlined.Add, "Create file") }
+                IconButton(onClick = { createDialog = "folder" }) { Icon(Icons.Outlined.CreateNewFolder, "Create folder") }
             }
         )
     }) { padding ->
         Column(Modifier.fillMaxSize().padding(padding).padding(horizontal = 16.dp)) {
             if (currentPath.isNotBlank()) {
-                FilledTonalButton(onClick = { vm.up(workspace) }, modifier = Modifier.padding(top = 8.dp)) { Icon(Icons.Outlined.ArrowBack, null); Spacer(Modifier.padding(3.dp)); Text("Parent") }
+                FilledTonalButton(onClick = { vm.up(workspace) }, modifier = Modifier.padding(vertical = 8.dp)) { Icon(Icons.Outlined.ArrowBack, null); Spacer(Modifier.padding(3.dp)); Text("Parent") }
             }
-            if (loading) CircularProgressIndicator(Modifier.padding(20.dp))
+            if (loading) CircularProgressIndicator(Modifier.padding(16.dp))
             LazyColumn(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 items(entries, key = { it.relativePath }) { entry ->
-                    WorkspaceEntryCard(entry, onOpen = {
+                    EntryCard(entry, onOpen = {
                         if (entry.type == EntryType.DIRECTORY) vm.enter(workspace, entry.relativePath) else vm.read(workspace, entry.relativePath)
                     }, onDelete = { vm.delete(workspace, entry.relativePath) })
                 }
@@ -268,28 +274,26 @@ private fun ProjectScreen(project: NexusProject, workspace: Workspace, onBack: (
         }
     }
 
-    if (showCreateMenu) {
-        AlertDialog(onDismissRequest = { showCreateMenu = false }, title = { Text("Create in ${if (currentPath.isBlank()) workspace.displayName else currentPath}") }, text = {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                FilledTonalButton(onClick = { showCreateMenu = false; createFolder = true }, modifier = Modifier.fillMaxWidth()) { Icon(Icons.Outlined.CreateNewFolder, null); Spacer(Modifier.padding(3.dp)); Text("New folder") }
-                FilledTonalButton(onClick = { showCreateMenu = false; createFolder = false; createName = "" }, modifier = Modifier.fillMaxWidth()) { Icon(Icons.Outlined.Description, null); Spacer(Modifier.padding(3.dp)); Text("New file") }
+    createDialog?.let { type ->
+        NameDialog(
+            title = if (type == "folder") "New folder" else "New file",
+            onDismiss = { createDialog = null },
+            onConfirm = { name ->
+                if (type == "folder") vm.createDirectory(workspace, joinPath(currentPath, name)) else vm.createFile(workspace, joinPath(currentPath, name))
+                createDialog = null
             }
-        }, confirmButton = {}, dismissButton = { TextButton(onClick = { showCreateMenu = false }) { Text("Cancel") } })
+        )
     }
-
-    if (!showCreateMenu && createName.isEmpty() && false) Unit
-    if (createFolder || (!showCreateMenu && createName.isNotEmpty())) {
-        NameDialog(title = if (createFolder) "New folder" else "New file", value = createName, onValueChange = { createName = it }, onDismiss = { createFolder = false; createName = "" }, onConfirm = {
-            if (createFolder) vm.createDirectory(workspace, it) else vm.createFile(workspace, it)
-            createFolder = false; createName = ""
-        })
+    error?.let { message ->
+        AlertDialog(onDismissRequest = vm::clearError, title = { Text("Workspace error") }, text = { Text(message) }, confirmButton = { TextButton(onClick = vm::clearError) { Text("OK") } })
     }
-    if (error != null) AlertDialog(onDismissRequest = { vm.clearError() }, title = { Text("Workspace error") }, text = { Text(error ?: "Unknown error") }, confirmButton = { TextButton(onClick = { vm.clearError() }) { Text("OK") } })
-    if (openedFile != null) AlertDialog(onDismissRequest = { vm.clearOpenedFile() }, title = { Text(openedFile?.name ?: "File") }, text = { Text(openedFile?.content ?: "", style = MaterialTheme.typography.bodySmall) }, confirmButton = { TextButton(onClick = { vm.clearOpenedFile() }) { Text("Close") } })
+    openedFile?.let { file ->
+        AlertDialog(onDismissRequest = vm::clearOpenedFile, title = { Text(file.name) }, text = { Text(file.content, style = MaterialTheme.typography.bodySmall) }, confirmButton = { TextButton(onClick = vm::clearOpenedFile) { Text("Close") } })
+    }
 }
 
 @Composable
-private fun WorkspaceEntryCard(entry: com.mrredhood.nexus.core.workspace.WorkspaceEntry, onOpen: () -> Unit, onDelete: () -> Unit) {
+private fun EntryCard(entry: WorkspaceEntry, onOpen: () -> Unit, onDelete: () -> Unit) {
     Card(onClick = onOpen, shape = MaterialTheme.shapes.large) {
         Row(Modifier.fillMaxWidth().padding(16.dp), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
             Icon(if (entry.type == EntryType.DIRECTORY) Icons.Outlined.Folder else Icons.Outlined.Description, null)
@@ -297,15 +301,18 @@ private fun WorkspaceEntryCard(entry: com.mrredhood.nexus.core.workspace.Workspa
                 Text(entry.name, style = MaterialTheme.typography.titleMedium)
                 Text(if (entry.type == EntryType.DIRECTORY) "Folder" else formatBytes(entry.sizeBytes), style = MaterialTheme.typography.bodySmall)
             }
-            IconButton(onClick = onDelete) { Icon(Icons.Outlined.Delete, "Delete ${entry.name}") }
+            IconButton(onClick = onDelete) { Icon(Icons.Outlined.Delete, "Delete") }
         }
     }
 }
 
 @Composable
-private fun NameDialog(title: String, value: String, onValueChange: (String) -> Unit, onDismiss: () -> Unit, onConfirm: (String) -> Unit) {
-    AlertDialog(onDismissRequest = onDismiss, title = { Text(title) }, text = { OutlinedTextField(value = value, onValueChange = onValueChange, label = { Text("Name") }, singleLine = true) }, confirmButton = { FilledTonalButton(enabled = value.trim().isNotEmpty(), onClick = { onConfirm(value.trim()) }) { Text("Create") } }, dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } })
+private fun NameDialog(title: String, onDismiss: () -> Unit, onConfirm: (String) -> Unit) {
+    var value by remember { mutableStateOf("") }
+    AlertDialog(onDismissRequest = onDismiss, title = { Text(title) }, text = { OutlinedTextField(value, { value = it }, label = { Text("Name") }, singleLine = true) }, confirmButton = { FilledTonalButton(enabled = value.trim().isNotEmpty(), onClick = { onConfirm(value.trim()) }) { Text("Create") } }, dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } })
 }
+
+private fun joinPath(parent: String, child: String): String = if (parent.isBlank()) child else "$parent/${child.trimStart('/')}"
 
 private fun formatBytes(value: Long): String = when {
     value < 1024 -> "$value B"
