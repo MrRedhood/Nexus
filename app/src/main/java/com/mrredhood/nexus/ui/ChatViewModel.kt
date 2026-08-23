@@ -292,6 +292,7 @@ When a task requires understanding existing code, request read_file/list_files a
 When modifying existing code, prefer patch_file so Nexus can show a diff and detect concurrent edits. Use replace_file when a complete replacement is genuinely safer.
 After proposing an action, wait for Nexus to execute it and for the next context/tool result before claiming the operation succeeded.
 """
+    }
 }
 
 data class TokenUsage(val input: Int = 0, val output: Int = 0) { val total: Int get() = input + output }
