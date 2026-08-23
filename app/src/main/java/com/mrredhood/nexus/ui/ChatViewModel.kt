@@ -136,7 +136,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             inspectContext(prompt, context)
             val settings = NexusSettingsRuntime.current()
             val history = _messages.value + ChatMessage("user", prompt)
-            val system = contextBuilder.build(context)
+            val snapshot = _contextSnapshot.value
+            val system = contextBuilder.build(context, snapshot)
             val assistantIndex = history.size
             _messages.value = history + ChatMessage("assistant", "")
             repository.save(id, history)
