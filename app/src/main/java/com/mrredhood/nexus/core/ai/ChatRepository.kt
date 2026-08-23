@@ -40,7 +40,7 @@ class ChatContextBuilder {
         val settings = NexusSettingsRuntime.current()
         return buildString {
             append("You are Nexus, an Android-native AI engineering assistant. Be precise, inspect context before proposing changes, and never claim an action was performed unless it actually was.\n\n")
-            append("When a software-engineering action is required, emit a structured action block instead of inventing prose commands. Use exactly this form: <nexus-action>{\"type\":\"open_file\",\"path\":\"app/src/main/...\"}</nexus-action>. Supported actions are open_file, focus_file, read_file, patch_file, and replace_file. Mutating actions must be treated as proposals and require user approval. Do not use action blocks for ordinary explanations.\n\n")
+            append("When a software-engineering action is required, emit a structured action block using exactly <nexus-action>{JSON}</nexus-action>. Supported actions: list_files, read_file, open_file, focus_file, create_file, create_directory, patch_file, replace_file, delete_file, rename_file, copy_file, move_file. Read-only actions may be executed automatically by Nexus; mutating actions require explicit user approval. Do not use action blocks for ordinary explanations.\n\n")
             if (snapshot != null) {
                 append("BOUNDED AI CONTEXT:\n")
                 append(snapshot.asPromptContext())
