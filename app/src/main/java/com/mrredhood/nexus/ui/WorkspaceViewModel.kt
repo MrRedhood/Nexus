@@ -8,6 +8,10 @@ import com.mrredhood.nexus.core.workspace.Workspace
 import com.mrredhood.nexus.core.workspace.WorkspaceEntry
 import com.mrredhood.nexus.core.workspace.WorkspaceFile
 import com.mrredhood.nexus.core.workspace.WorkspaceFileSystem
+import com.mrredhood.nexus.core.workspace.WorkspaceSearch
+import com.mrredhood.nexus.core.workspace.WorkspaceSearchOptions
+import com.mrredhood.nexus.core.workspace.WorkspaceSearchResult
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -15,6 +19,9 @@ import kotlinx.coroutines.launch
 
 class WorkspaceViewModel(context: Context) : ViewModel() {
     private val fileSystem = WorkspaceFileSystem(context.applicationContext)
+    private val searchService = WorkspaceSearch(fileSystem)
+    private var searchJob: Job? = null
+
     private val _entries = MutableStateFlow<List<WorkspaceEntry>>(emptyList())
     val entries: StateFlow<List<WorkspaceEntry>> = _entries.asStateFlow()
     private val _currentPath = MutableStateFlow("")
@@ -33,11 +40,43 @@ class WorkspaceViewModel(context: Context) : ViewModel() {
     val editorDirty: StateFlow<Boolean> = _editorDirty.asStateFlow()
     private val _saving = MutableStateFlow(false)
     val saving: StateFlow<Boolean> = _saving.asStateFlow()
+    private val _searchResults = MutableStateFlow<List<WorkspaceSearchResult>>(emptyList())
+    val searchResults: StateFlow<List<WorkspaceSearchResult>> = _searchResults.asStateFlow()
+    private val _searching = MutableStateFlow(false)
+    val searching: StateFlow<Boolean> = _searching.asStateFlow()
+    private val _searchQuery = MutableStateFlow("")
+    val searchQuery: StateFlow<String> = _searchQuery.asStateFlow()
 
     fun open(workspace: Workspace) { _currentPath.value = ""; load(workspace, "") }
     fun enter(workspace: Workspace, relativePath: String) = load(workspace, relativePath)
     fun up(workspace: Workspace) = load(workspace, _currentPath.value.substringBeforeLast('/', ""))
     fun refresh(workspace: Workspace) = load(workspace, _currentPath.value)
+
+    fun search(workspace: Workspace, options: WorkspaceSearchOptions) {
+        searchJob?.cancel()
+        _searchQuery.value = options.query
+        _searching.value = true
+        _error.value = null
+        searchJob = viewModelScope.launch {
+            try {
+                _searchResults.value = searchService.search(workspace, options)
+            } catch (_: kotlinx.coroutines.CancellationException) {
+                throw kotlinx.coroutines.CancellationException()
+            } catch (e: Exception) {
+                _error.value = e.message ?: "Search failed"
+            } finally {
+                _searching.value = false
+            }
+        }
+    }
+
+    fun clearSearch() {
+        searchJob?.cancel()
+        searchJob = null
+        _searchQuery.value = ""
+        _searchResults.value = emptyList()
+        _searching.value = false
+    }
 
     fun read(workspace: Workspace, relativePath: String) {
         viewModelScope.launch {
