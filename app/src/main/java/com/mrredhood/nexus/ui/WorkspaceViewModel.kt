@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import com.mrredhood.nexus.core.ai.NexusEditorActionBus
 import com.mrredhood.nexus.core.editor.EditorDocument
 import com.mrredhood.nexus.core.editor.EditorDocumentManager
 import com.mrredhood.nexus.core.editor.EditorDocumentState
@@ -33,6 +34,7 @@ class WorkspaceViewModel(context: Context) : ViewModel() {
     private var searchJob: Job? = null
     private var navigationJob: Job? = null
     private var openedWorkspaceId: String? = null
+    private var activeWorkspace: Workspace? = null
 
     private val _entries = MutableStateFlow<List<WorkspaceEntry>>(emptyList()); val entries: StateFlow<List<WorkspaceEntry>> = _entries.asStateFlow()
     private val _currentPath = MutableStateFlow(""); val currentPath: StateFlow<String> = _currentPath.asStateFlow()
@@ -54,10 +56,18 @@ class WorkspaceViewModel(context: Context) : ViewModel() {
 
     init {
         NexusSettingsRuntime.initialize(context.applicationContext)
+        viewModelScope.launch {
+            NexusEditorActionBus.requests.collect { request ->
+                val workspace = activeWorkspace
+                if (workspace == null || workspace.id != request.workspaceId) return@collect
+                if (request.focus) activateEditor(workspace, request.path)
+                else read(workspace, request.path)
+            }
+        }
     }
 
     fun open(workspace: Workspace) {
-        navigationJob?.cancel(); _currentPath.value = ""; _navigationStack.value = emptyList(); _recentPaths.value = emptyList(); openedWorkspaceId = workspace.id; clearEditorState(); load(workspace, "", emptyList());
+        navigationJob?.cancel(); _currentPath.value = ""; _navigationStack.value = emptyList(); _recentPaths.value = emptyList(); openedWorkspaceId = workspace.id; activeWorkspace = workspace; clearEditorState(); load(workspace, "", emptyList());
         if (NexusSettingsRuntime.current().rememberOpenFiles) restoreOpenTabs(workspace)
         else closeWorkspaceDocuments(workspace)
     }
@@ -91,6 +101,7 @@ class WorkspaceViewModel(context: Context) : ViewModel() {
     fun activateEditor(workspace: Workspace, relativePath: String) {
         viewModelScope.launch {
             if (tabManager.activate(workspace.id, relativePath)) documentManager.activate(workspace.id, relativePath)?.let(::publishDocument)
+            else _error.value = "File is not open in the editor: $relativePath"
             refreshOpenDocuments()
         }
     }
@@ -196,5 +207,3 @@ class WorkspaceViewModel(context: Context) : ViewModel() {
     private fun mimeTypeFor(path: String): String = when (path.substringAfterLast('.', "").lowercase()) { "kt", "kts", "java", "groovy" -> "text/x-kotlin"; "js", "mjs", "cjs", "ts", "tsx", "jsx" -> "text/javascript"; "json" -> "application/json"; "xml" -> "application/xml"; "html", "htm" -> "text/html"; "css" -> "text/css"; "md", "markdown", "txt", "gradle", "properties", "yaml", "yml", "toml", "sh" -> "text/plain"; else -> "text/plain" }
     private fun join(parent: String, child: String): String { val cleanChild = child.trim().replace('\\', '/').trim('/'); if (parent.isBlank()) return cleanChild; val cleanParent = parent.trim('/').replace('\\', '/'); return if (cleanChild == cleanParent || cleanChild.startsWith("$cleanParent/")) cleanChild else "$cleanParent/$cleanChild" }
 }
-
-class WorkspaceViewModelFactory(private val context: Context) : ViewModelProvider.Factory { @Suppress("UNCHECKED_CAST") override fun <T : ViewModel> create(modelClass: Class<T>): T { if (modelClass.isAssignableFrom(WorkspaceViewModel::class.java)) return WorkspaceViewModel(context) as T; error("Unknown ViewModel: ${modelClass.name}") } }
