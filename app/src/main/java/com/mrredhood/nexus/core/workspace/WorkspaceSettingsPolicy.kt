@@ -5,8 +5,7 @@ import com.mrredhood.nexus.core.settings.NexusSettings
 /** Workspace/explorer behavior derived from the live Nexus settings. */
 object WorkspaceSettingsPolicy {
     fun shouldShowEntry(entry: WorkspaceEntry, settings: NexusSettings): Boolean {
-        if (settings.showHiddenFiles) return true
-        return !entry.name.startsWith(".")
+        return settings.showHiddenFiles || !entry.name.startsWith(".")
     }
 
     fun compare(a: WorkspaceEntry, b: WorkspaceEntry, settings: NexusSettings): Int {
@@ -20,9 +19,7 @@ object WorkspaceSettingsPolicy {
                 ?: a.name.compareTo(b.name, ignoreCase = true)
             "size" -> a.sizeBytes.compareTo(b.sizeBytes).takeIf { it != 0 }
                 ?: a.name.compareTo(b.name, ignoreCase = true)
-            "modified" -> a.lastModified.compareTo(b.lastModified).takeIf { it != 0 }
-                ?: a.name.compareTo(b.name, ignoreCase = true)
-            "created" -> a.created.compareTo(b.created).takeIf { it != 0 }
+            "modified", "created" -> a.lastModified.compareTo(b.lastModified).takeIf { it != 0 }
                 ?: a.name.compareTo(b.name, ignoreCase = true)
             else -> a.name.compareTo(b.name, ignoreCase = true)
         }
