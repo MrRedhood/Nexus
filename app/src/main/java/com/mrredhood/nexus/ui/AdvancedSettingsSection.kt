@@ -3,7 +3,6 @@ package com.mrredhood.nexus.ui
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
@@ -35,7 +34,7 @@ fun AdvancedSettingsSection() {
         "free" -> it.pricing.free; "premium" -> it.premium; "image" -> it.image; "video" -> it.video; "audio" -> it.audio; "text" -> it.text; else -> true
     } }
 
-    Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         SettingsSection("AI Providers & Models") {
             ChoiceRow("Provider", settings.provider, listOf("Gemini", "OpenRouter", "DeepInfra", "LiteLLM")) { v -> vm.update { it.copy(provider = v, apiKeyConfigured = vm.hasApiKey(v), model = "default") }; vm.loadModels(v) }
             Text("Model", style = MaterialTheme.typography.labelLarge)
