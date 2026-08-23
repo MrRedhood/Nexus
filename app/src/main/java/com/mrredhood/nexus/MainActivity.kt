@@ -42,6 +42,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.mrredhood.nexus.data.ProjectRepository
 import com.mrredhood.nexus.ui.NexusViewModel
@@ -63,17 +64,18 @@ class MainActivity : ComponentActivity() {
 
 @Composable
 private fun NexusApp(vm: NexusViewModel) {
+    val projects by vm.projects.collectAsStateWithLifecycle()
     var selectedId by remember { mutableStateOf<String?>(null) }
-    val selected = vm.projects.value.firstOrNull { it.id == selectedId }
+    val selected = projects.firstOrNull { it.id == selectedId }
     Surface(modifier = Modifier.fillMaxSize()) {
-        if (selected == null) HomeScreen(vm, onOpen = { selectedId = it })
+        if (selected == null) HomeScreen(projects, vm, onOpen = { selectedId = it })
         else ProjectScreen(selected.name, selected.repository, onBack = { selectedId = null })
     }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun HomeScreen(vm: NexusViewModel, onOpen: (String) -> Unit) {
+private fun HomeScreen(projects: List<com.mrredhood.nexus.core.model.NexusProject>, vm: NexusViewModel, onOpen: (String) -> Unit) {
     var showCreate by remember { mutableStateOf(false) }
     Scaffold(
         topBar = {
@@ -98,7 +100,7 @@ private fun HomeScreen(vm: NexusViewModel, onOpen: (String) -> Unit) {
                 }
             }
             item { Text("Projects", style = MaterialTheme.typography.titleLarge, modifier = Modifier.padding(top = 8.dp)) }
-            if (vm.projects.value.isEmpty()) {
+            if (projects.isEmpty()) {
                 item {
                     Card(shape = MaterialTheme.shapes.large) {
                         Column(Modifier.padding(20.dp)) {
@@ -111,7 +113,7 @@ private fun HomeScreen(vm: NexusViewModel, onOpen: (String) -> Unit) {
                     }
                 }
             }
-            items(vm.projects.value, key = { it.id }) { project ->
+            items(projects, key = { it.id }) { project ->
                 Card(onClick = { onOpen(project.id) }, shape = MaterialTheme.shapes.large) {
                     Row(Modifier.fillMaxWidth().padding(18.dp), horizontalArrangement = Arrangement.SpaceBetween) {
                         Column(Modifier.weight(1f)) {
