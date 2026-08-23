@@ -27,23 +27,37 @@ fun AdvancedSettingsSection() {
     val vm: AdvancedSettingsViewModel = viewModel()
     val settings by vm.settings.collectAsState()
     var apiKey by remember { mutableStateOf("") }
-    var keyProvider by remember { mutableStateOf(settings.provider) }
+    var testRunning by remember { mutableStateOf(false) }
+    var testMessage by remember { mutableStateOf<String?>(null) }
+    var testSuccess by remember { mutableStateOf(false) }
+    var model by remember(settings.provider) { mutableStateOf(settings.model.takeUnless { it == "default" }.orEmpty()) }
+    var endpoint by remember(settings.provider) { mutableStateOf(settings.endpoint) }
 
     LaunchedEffect(settings.provider) {
-        if (keyProvider != settings.provider) {
-            keyProvider = settings.provider
-            apiKey = ""
-        }
+        apiKey = ""
+        testMessage = null
+        model = settings.model.takeUnless { it == "default" }.orEmpty()
+        endpoint = settings.endpoint
     }
 
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         SettingsSection("AI Providers & Models") {
             ChoiceRow("Provider", settings.provider, listOf("Gemini", "OpenRouter", "DeepInfra", "LiteLLM")) { v ->
-                apiKey = ""
-                keyProvider = v
                 vm.update { it.copy(provider = v, apiKeyConfigured = vm.hasApiKey(v)) }
             }
-            ChoiceRow("Model", settings.model, listOf("default", "fast", "balanced", "reasoning")) { v -> vm.update { it.copy(model = v) } }
+
+            OutlinedTextField(
+                value = model,
+                onValueChange = { model = it },
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text("Model ID") },
+                placeholder = { Text(defaultModelHint(settings.provider)) },
+                singleLine = true
+            )
+            Button(
+                onClick = { vm.update { it.copy(model = model.trim().ifBlank { "default" }) } },
+                modifier = Modifier.fillMaxWidth()
+            ) { Text("Save model") }
 
             OutlinedTextField(
                 value = apiKey,
@@ -64,25 +78,52 @@ fun AdvancedSettingsSection() {
                 onClick = {
                     vm.saveApiKey(settings.provider, apiKey.trim())
                     apiKey = ""
+                    testMessage = null
                 },
                 modifier = Modifier.fillMaxWidth()
             ) { Text("Save API key") }
             if (vm.hasApiKey(settings.provider)) {
-                TextButton(onClick = { vm.clearApiKey(settings.provider); apiKey = "" }, modifier = Modifier.fillMaxWidth()) {
+                TextButton(onClick = { vm.clearApiKey(settings.provider); apiKey = ""; testMessage = null }, modifier = Modifier.fillMaxWidth()) {
                     Text("Remove stored key")
                 }
             }
 
             OutlinedTextField(
-                value = settings.endpoint,
-                onValueChange = { vm.update { current -> current.copy(endpoint = it) } },
+                value = endpoint,
+                onValueChange = { endpoint = it },
                 modifier = Modifier.fillMaxWidth(),
                 label = { Text("Custom endpoint (optional)") },
-                placeholder = { Text("Provider-specific API URL") },
+                placeholder = { Text(defaultEndpointHint(settings.provider)) },
                 singleLine = true
             )
+            Button(
+                onClick = { vm.update { it.copy(endpoint = endpoint.trim()) } },
+                modifier = Modifier.fillMaxWidth()
+            ) { Text("Save endpoint") }
+
+            Button(
+                enabled = vm.hasApiKey(settings.provider) && !testRunning,
+                onClick = {
+                    testRunning = true
+                    testMessage = null
+                    vm.testConnection { success, message ->
+                        testRunning = false
+                        testSuccess = success
+                        testMessage = message
+                    }
+                },
+                modifier = Modifier.fillMaxWidth()
+            ) { Text(if (testRunning) "Testing connection…" else "Test connection") }
+
+            testMessage?.let {
+                Text(
+                    it,
+                    color = if (testSuccess) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
+                    style = MaterialTheme.typography.bodySmall
+                )
+            }
             Text(
-                "Keys are encrypted with Android Keystore. Nexus never stores the raw key in DataStore or project files.",
+                "Keys are encrypted with Android Keystore. Nexus never stores the raw key in DataStore or project files. Provider execution uses a common HTTP interface; no provider SDK is bundled.",
                 style = MaterialTheme.typography.bodySmall
             )
         }
@@ -121,4 +162,18 @@ fun AdvancedSettingsSection() {
 
         Spacer(Modifier.padding(bottom = 4.dp))
     }
+}
+
+private fun defaultModelHint(provider: String): String = when {
+    provider.equals("Gemini", true) -> "gemini-2.5-flash"
+    provider.equals("OpenRouter", true) -> "google/gemini-2.5-flash"
+    provider.equals("DeepInfra", true) -> "meta-llama/Llama-3.3-70B-Instruct"
+    else -> "Model ID exposed by your LiteLLM server"
+}
+
+private fun defaultEndpointHint(provider: String): String = when {
+    provider.equals("OpenRouter", true) -> "https://openrouter.ai/api/v1/chat/completions"
+    provider.equals("DeepInfra", true) -> "https://api.deepinfra.com/v1/openai/chat/completions"
+    provider.equals("LiteLLM", true) -> "http://localhost:4000/v1/chat/completions"
+    else -> "Gemini endpoint is built in"
 }
