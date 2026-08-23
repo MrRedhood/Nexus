@@ -34,6 +34,16 @@ class NexusViewModel(
         }
     }
 
+    fun attachWorkspace(project: NexusProject, workspaceUri: Uri, displayName: String, onAttached: () -> Unit = {}) {
+        viewModelScope.launch {
+            workspaceRepository.takePersistablePermission(workspaceUri)
+            val workspaceId = project.workspaceId ?: UUID.randomUUID().toString()
+            workspaceRepository.save(Workspace(workspaceId, project.id, displayName.ifBlank { project.name }, workspaceUri.toString()))
+            projectRepository.save(project.copy(workspaceId = workspaceId, updatedAt = System.currentTimeMillis()))
+            onAttached()
+        }
+    }
+
     fun deleteProject(id: String) = viewModelScope.launch {
         workspaceRepository.removeForProject(id)
         projectRepository.delete(id)
@@ -42,14 +52,10 @@ class NexusViewModel(
     fun workspaceForProject(projectId: String): Workspace? = workspaces.value.firstOrNull { it.projectId == projectId }
 }
 
-class NexusViewModelFactory(
-    private val context: Context
-) : ViewModelProvider.Factory {
+class NexusViewModelFactory(private val context: Context) : ViewModelProvider.Factory {
     @Suppress("UNCHECKED_CAST")
     override fun <T : ViewModel> create(modelClass: Class<T>): T {
-        if (modelClass.isAssignableFrom(NexusViewModel::class.java)) {
-            return NexusViewModel(ProjectRepository(context), WorkspaceRepository(context)) as T
-        }
+        if (modelClass.isAssignableFrom(NexusViewModel::class.java)) return NexusViewModel(ProjectRepository(context), WorkspaceRepository(context)) as T
         error("Unknown ViewModel: ${modelClass.name}")
     }
 }
