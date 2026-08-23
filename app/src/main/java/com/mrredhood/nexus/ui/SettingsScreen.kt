@@ -137,6 +137,8 @@ fun SettingsScreen(settings: NexusSettings, onUpdate: ((NexusSettings) -> NexusS
                 ToggleRow("App lock", settings.appLock) { v -> onUpdate { it.copy(appLock = v) } }
             }
 
+            AdvancedSettingsSection()
+
             Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHighest), modifier = Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(16.dp)) {
                     Text("Build architecture", style = MaterialTheme.typography.titleMedium)
