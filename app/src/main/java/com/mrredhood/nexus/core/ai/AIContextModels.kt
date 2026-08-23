@@ -18,7 +18,9 @@ data class AIContextOptions(
     init {
         require(maxRelatedFiles in 0..50)
         require(maxFileSizeChars in 1..500_000)
-        require(maxContextTokens in 256..1_000_000)
+        // Keep the lower bound low enough for deterministic unit tests and
+        // for deliberately tiny contexts while still rejecting unusable values.
+        require(maxContextTokens in 16..1_000_000)
     }
 }
 
