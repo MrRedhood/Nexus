@@ -14,7 +14,9 @@ import com.mrredhood.nexus.core.ai.NexusActionExecutor
 import com.mrredhood.nexus.core.ai.NexusActionPolicy
 import com.mrredhood.nexus.core.ai.NexusActionProposal
 import com.mrredhood.nexus.core.ai.NexusActionProtocol
+import com.mrredhood.nexus.core.ai.NexusActionReview
 import com.mrredhood.nexus.core.ai.NexusActionStatus
+import com.mrredhood.nexus.core.ai.NexusEditorActionBus
 import com.mrredhood.nexus.core.settings.NexusSettingsRuntime
 import com.mrredhood.nexus.core.workspace.Workspace
 import com.mrredhood.nexus.core.workspace.WorkspaceFileSystem
@@ -44,22 +46,36 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     val tokenUsage: StateFlow<TokenUsage> = _tokenUsage.asStateFlow()
     private val _actionProposals = MutableStateFlow<List<NexusActionProposal>>(emptyList())
     val actionProposals: StateFlow<List<NexusActionProposal>> = _actionProposals.asStateFlow()
+    private val _actionReviews = MutableStateFlow<Map<String, NexusActionReview>>(emptyMap())
+    val actionReviews: StateFlow<Map<String, NexusActionReview>> = _actionReviews.asStateFlow()
     private val _actionMessage = MutableStateFlow<String?>(null)
     val actionMessage: StateFlow<String?> = _actionMessage.asStateFlow()
 
     fun open(workspace: Workspace) {
-        if (this.workspaceId == workspace.id) {
-            this.workspace = workspace
-            return
-        }
+        if (this.workspaceId == workspace.id) { this.workspace = workspace; return }
         stop()
         this.workspaceId = workspace.id
         this.workspace = workspace
         _messages.value = repository.load(workspace.id)
-        _actionProposals.value = NexusActionProtocol.extract(_messages.value.lastOrNull { it.role == "assistant" }?.content.orEmpty())
+        val proposals = NexusActionProtocol.extract(_messages.value.lastOrNull { it.role == "assistant" }?.content.orEmpty())
+        _actionProposals.value = proposals
+        _actionReviews.value = emptyMap()
+        previewMutatingActions(proposals, workspace)
         _error.value = null
         _actionMessage.value = null
         _tokenUsage.value = TokenUsage()
+    }
+
+    private fun previewMutatingActions(proposals: List<NexusActionProposal>, targetWorkspace: Workspace) {
+        viewModelScope.launch {
+            val reviews = mutableMapOf<String, NexusActionReview>()
+            proposals.filter { NexusActionPolicy.requiresApproval(it.action) }.forEach { proposal ->
+                runCatching { actionExecutor.preview(targetWorkspace, proposal) }.onSuccess { review ->
+                    if (review != null) reviews[proposal.id] = review
+                }
+            }
+            _actionReviews.value = reviews
+        }
     }
 
     fun send(text: String, context: ChatContext = ChatContext()) {
@@ -71,6 +87,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             _error.value = null
             _actionMessage.value = null
             _actionProposals.value = emptyList()
+            _actionReviews.value = emptyMap()
             val settings = NexusSettingsRuntime.current()
             val history = _messages.value + ChatMessage("user", prompt)
             val system = contextBuilder.build(context)
@@ -108,7 +125,9 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                     else current.add(ChatMessage("assistant", finalText))
                     _messages.value = current
                     repository.save(id, current)
-                    _actionProposals.value = NexusActionProtocol.extract(finalText)
+                    val proposals = NexusActionProtocol.extract(finalText)
+                    _actionProposals.value = proposals
+                    workspace?.let { previewMutatingActions(proposals, it) }
                     _tokenUsage.value = TokenUsage(
                         input = response?.inputTokens ?: estimateTokens(system + history.joinToString { it.content }),
                         output = response?.outputTokens ?: estimateTokens(finalText)
@@ -118,7 +137,9 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 val current = _messages.value
                 if (current.lastOrNull()?.role == "assistant" && current.last().content.isNotBlank()) {
                     repository.save(id, current)
-                    _actionProposals.value = NexusActionProtocol.extract(current.last().content)
+                    val proposals = NexusActionProtocol.extract(current.last().content)
+                    _actionProposals.value = proposals
+                    workspace?.let { previewMutatingActions(proposals, it) }
                 } else repository.save(id, history)
                 throw cancelled
             } catch (error: Throwable) {
@@ -129,17 +150,14 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun stop() {
-        generationJob?.cancel()
-        generationJob = null
-        _generating.value = false
-    }
+    fun stop() { generationJob?.cancel(); generationJob = null; _generating.value = false }
 
     fun clear() {
         stop()
         workspaceId?.let(repository::clear)
         _messages.value = emptyList()
         _actionProposals.value = emptyList()
+        _actionReviews.value = emptyMap()
         _actionMessage.value = null
         _error.value = null
         _tokenUsage.value = TokenUsage()
@@ -148,34 +166,52 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     fun clearError() { _error.value = null }
 
     fun rejectAction(id: String) {
-        _actionProposals.value = _actionProposals.value.map { proposal -> if (proposal.id == id) proposal.copy(status = NexusActionStatus.REJECTED) else proposal }
+        _actionProposals.value = _actionProposals.value.map { if (it.id == id) it.copy(status = NexusActionStatus.REJECTED) else it }
+    }
+
+    fun openAction(id: String) {
+        val target = _actionProposals.value.firstOrNull { it.id == id } ?: return
+        val path = target.action.path ?: return
+        if (target.action.type == "open_file" || target.action.type == "focus_file") {
+            workspace?.let { NexusEditorActionBus.request(it.id, path, target.action.type == "focus_file") }
+        }
     }
 
     fun approveAction(id: String) {
         val target = _actionProposals.value.firstOrNull { it.id == id } ?: return
-        if (target.status == NexusActionStatus.REJECTED || target.status == NexusActionStatus.COMPLETED) return
+        if (target.status == NexusActionStatus.REJECTED || target.status == NexusActionStatus.COMPLETED || target.status == NexusActionStatus.EXECUTING) return
+        val targetWorkspace = workspace ?: run { _actionMessage.value = "Open a workspace before applying this action."; return }
         viewModelScope.launch {
-            _actionProposals.value = _actionProposals.value.map { proposal -> if (proposal.id == id) proposal.copy(status = NexusActionStatus.EXECUTING) else proposal }
-            val result = if (workspace == null) {
-                com.mrredhood.nexus.core.ai.ActionExecutionResult(false, "Open a workspace before applying this action.")
-            } else {
-                actionExecutor.execute(workspace!!, target.action)
+            if (NexusActionPolicy.requiresApproval(target.action)) {
+                val freshReview = runCatching { actionExecutor.preview(targetWorkspace, target) }.getOrElse {
+                    _actionMessage.value = it.message ?: "Unable to prepare action review."
+                    return@launch
+                }
+                if (freshReview == null) {
+                    _actionMessage.value = "This action cannot be reviewed safely."
+                    return@launch
+                }
+                _actionReviews.value = _actionReviews.value + (id to freshReview)
+                if (!freshReview.changed) {
+                    _actionProposals.value = _actionProposals.value.map { if (it.id == id) it.copy(status = NexusActionStatus.COMPLETED) else it }
+                    _actionMessage.value = "No changes to apply for ${freshReview.path}."
+                    return@launch
+                }
             }
-            _actionProposals.value = _actionProposals.value.map { proposal ->
-                if (proposal.id == id) proposal.copy(status = if (result.success) NexusActionStatus.COMPLETED else NexusActionStatus.FAILED) else proposal
-            }
+            _actionProposals.value = _actionProposals.value.map { if (it.id == id) it.copy(status = NexusActionStatus.EXECUTING) else it }
+            val result = actionExecutor.execute(targetWorkspace, target.action)
+            _actionProposals.value = _actionProposals.value.map { if (it.id == id) it.copy(status = if (result.success) NexusActionStatus.COMPLETED else NexusActionStatus.FAILED) else it }
             _actionMessage.value = result.message
+            if (result.success && (target.action.type == "open_file" || target.action.type == "focus_file")) openAction(id)
+            if (result.success && NexusActionPolicy.requiresApproval(target.action)) {
+                actionExecutor.preview(targetWorkspace, target)?.let { _actionReviews.value = _actionReviews.value + (id to it) }
+            }
         }
     }
 
     private fun estimateTokens(text: String): Int = (text.length + 3) / 4
 
-    override fun onCleared() {
-        generationJob?.cancel()
-        super.onCleared()
-    }
+    override fun onCleared() { generationJob?.cancel(); super.onCleared() }
 }
 
-data class TokenUsage(val input: Int = 0, val output: Int = 0) {
-    val total: Int get() = input + output
-}
+data class TokenUsage(val input: Int = 0, val output: Int = 0) { val total: Int get() = input + output }
