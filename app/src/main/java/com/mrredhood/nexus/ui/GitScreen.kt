@@ -18,6 +18,7 @@ import androidx.compose.material.icons.outlined.CloudUpload
 import androidx.compose.material.icons.outlined.Download
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.Source
+import androidx.compose.material.icons.outlined.Terminal
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -65,6 +66,7 @@ fun GitScreen(project: NexusProject, workspace: Workspace, onBack: () -> Unit) {
     var info by remember { mutableStateOf<String?>(null) }
     var showCommit by remember { mutableStateOf(false) }
     var showArtifacts by remember { mutableStateOf(false) }
+    var showTerminal by remember { mutableStateOf(false) }
 
     fun refreshStatus() {
         val token = tokenStore.get("github")
@@ -104,8 +106,14 @@ fun GitScreen(project: NexusProject, workspace: Workspace, onBack: () -> Unit) {
     }
 
     LaunchedEffect(repository, branch) { if (repository.isNotBlank()) refreshStatus() }
-    BackHandler(onBack = onBack)
+    BackHandler {
+        if (showTerminal) showTerminal = false else onBack()
+    }
 
+    if (showTerminal) {
+        TerminalScreen(project, workspace) { showTerminal = false }
+        return
+    }
     if (showArtifacts) {
         ArtifactCenterScreen(project, workspace) { showArtifacts = false }
         return
@@ -116,6 +124,7 @@ fun GitScreen(project: NexusProject, workspace: Workspace, onBack: () -> Unit) {
             title = { Text("Source Control") },
             navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.Outlined.ArrowBack, "Back") } },
             actions = {
+                IconButton(onClick = { showTerminal = true }) { Icon(Icons.Outlined.Terminal, "Terminal") }
                 IconButton(onClick = { showArtifacts = true }) { Icon(Icons.Outlined.Download, "Build artifacts") }
                 IconButton(enabled = !loading, onClick = ::refreshStatus) { Icon(Icons.Outlined.Refresh, "Refresh") }
             }
