@@ -6,13 +6,25 @@ on:
   pull_request:
     branches: [ main ]
   workflow_dispatch:
+    inputs:
+      build_variant:
+        description: "APK variant to build"
+        required: false
+        default: debug
+        type: choice
+        options:
+          - debug
+          - release
 
 permissions:
   contents: read
 
 concurrency:
-  group: nexus-android-${{ github.ref }}
+  group: nexus-android-${{ github.ref }}-${{ github.event.inputs.build_variant || 'debug' }}
   cancel-in-progress: false
+
+env:
+  BUILD_VARIANT: ${{ github.event.inputs.build_variant || 'debug' }}
 
 jobs:
   android:
@@ -38,18 +50,18 @@ jobs:
         with:
           gradle-version: "8.11.1"
 
-      - name: Assemble debug APK
-        run: gradle --no-daemon --stacktrace assembleDebug
+      - name: Assemble APK
+        run: gradle --no-daemon --stacktrace assemble${BUILD_VARIANT^}
 
       - name: Run unit tests
         run: gradle --no-daemon --stacktrace testDebugUnitTest
 
-      - name: Upload debug APK artifact
+      - name: Upload APK artifact
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: nexus-debug-apk-${{ github.sha }}
-          path: app/build/outputs/apk/debug/*.apk
+          name: nexus-${{ env.BUILD_VARIANT }}-apk-${{ github.sha }}
+          path: app/build/outputs/apk/${{ env.BUILD_VARIANT }}/*.apk
           if-no-files-found: error
           retention-days: 14
 
