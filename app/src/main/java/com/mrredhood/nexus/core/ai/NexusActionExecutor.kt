@@ -13,7 +13,11 @@ class NexusActionExecutor(private val fileSystem: WorkspaceFileSystem) {
             "create_file" -> NexusDiffBuilder.build(proposal.id, path, "", action.content.orEmpty())
             "replace_file" -> { val current = fileSystem.read(workspace, requirePath(action)); NexusDiffBuilder.build(proposal.id, path, current.content, action.content ?: error("replace_file requires content")) }
             "patch_file" -> { val current = fileSystem.read(workspace, requirePath(action)); NexusDiffBuilder.build(proposal.id, path, current.content, applyUnifiedPatch(current.content, action.patch ?: error("patch_file requires patch"))) }
-            "delete_file" -> { val current = fileSystem.read(workspace, requirePath(action)); NexusDiffBuilder.build(proposal.id, path, current.content, "") }
+            "delete_file" -> {
+                val target = requirePath(action)
+                if (fileSystem.isDirectory(workspace, target)) NexusDiffBuilder.build(proposal.id, target, "[directory]", "")
+                else { val current = fileSystem.read(workspace, target); NexusDiffBuilder.build(proposal.id, path, current.content, "") }
+            }
             else -> null
         }
     }
@@ -28,7 +32,14 @@ class NexusActionExecutor(private val fileSystem: WorkspaceFileSystem) {
                 "create_directory" -> { val path = requirePath(action); fileSystem.createDirectory(workspace, path); ActionExecutionResult(true, "Created directory $path") }
                 "replace_file" -> { val path = requirePath(action); val content = action.content ?: error("replace_file requires content"); val current = fileSystem.read(workspace, path); val review = NexusDiffBuilder.build(action.id, path, current.content, content); fileSystem.write(workspace, path, content); ActionExecutionResult(true, "Updated $path (+${review.additions} -${review.deletions} lines)", content) }
                 "patch_file" -> { val path = requirePath(action); val patch = action.patch ?: error("patch_file requires patch"); val current = fileSystem.read(workspace, path); val updated = applyUnifiedPatch(current.content, patch); val review = NexusDiffBuilder.build(action.id, path, current.content, updated); fileSystem.writeIfUnchanged(workspace, path, updated, current.mimeType ?: "text/plain", current.sizeBytes, current.lastModified); ActionExecutionResult(true, "Patched $path (+${review.additions} -${review.deletions} lines)", updated) }
-                "delete_file" -> { val path = requirePath(action); val current = fileSystem.read(workspace, path); val deletedLines = physicalLineCount(current.content); fileSystem.delete(workspace, path); ActionExecutionResult(true, "Deleted $path (-$deletedLines lines)") }
+                "delete_file" -> {
+                    val path = requirePath(action)
+                    val directory = fileSystem.isDirectory(workspace, path)
+                    var deletedLines = 0
+                    if (!directory) deletedLines = physicalLineCount(fileSystem.read(workspace, path).content)
+                    fileSystem.delete(workspace, path)
+                    ActionExecutionResult(true, if (directory) "Deleted directory $path" else "Deleted $path (-$deletedLines lines)")
+                }
                 "rename_file" -> { val path = requirePath(action); val newName = action.newName?.trim().orEmpty(); require(newName.isNotBlank()) { "rename_file requires newName" }; val result = fileSystem.rename(workspace, path, newName); ActionExecutionResult(true, "Renamed $path to ${result.relativePath}") }
                 "copy_file" -> { val source = requirePath(action); val destination = requireDestination(action); fileSystem.copy(workspace, source, destination); ActionExecutionResult(true, "Copied $source to $destination") }
                 "move_file" -> { val source = requirePath(action); val destination = requireDestination(action); fileSystem.move(workspace, source, destination); ActionExecutionResult(true, "Moved $source to $destination") }
