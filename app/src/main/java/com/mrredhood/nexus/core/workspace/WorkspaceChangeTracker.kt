@@ -86,7 +86,7 @@ class WorkspaceChangeTracker(private val fileSystem: WorkspaceFileSystem) {
     }
 
     private fun normalize(content: String): String = content.replace("\r\n", "\n").replace('\r', '\n')
-    private fun String.lineCount(): Int = if (isEmpty()) 0 else split('\n').size
+    private fun String.lineCount(): Int = if (isEmpty()) 0 else count { it == '\n' } + if (last() == '\n') 0 else 1
 
     private fun lineDiffCounts(a: List<String>, b: List<String>): Pair<Int, Int> {
         val n = a.size
@@ -164,20 +164,8 @@ object WorkspaceChangeTrackerRegistry {
     private val trackers = ConcurrentHashMap<String, WorkspaceChangeTracker>()
     private val _summaries = MutableStateFlow<Map<String, WorkspaceChangeSummary>>(emptyMap())
     val summaries: StateFlow<Map<String, WorkspaceChangeSummary>> = _summaries.asStateFlow()
-
     fun get(workspace: Workspace, fileSystem: WorkspaceFileSystem): WorkspaceChangeTracker = trackers.getOrPut(workspace.id) { WorkspaceChangeTracker(fileSystem) }
-
-    suspend fun startAndRefresh(workspace: Workspace, fileSystem: WorkspaceFileSystem): WorkspaceChangeSummary {
-        val tracker = get(workspace, fileSystem)
-        tracker.start(workspace)
-        return tracker.refresh(workspace).also { _summaries.value = _summaries.value + (workspace.id to it) }
-    }
-
-    suspend fun refresh(workspace: Workspace, fileSystem: WorkspaceFileSystem): WorkspaceChangeSummary {
-        return get(workspace, fileSystem).refresh(workspace).also { _summaries.value = _summaries.value + (workspace.id to it) }
-    }
-
-    suspend fun reset(workspace: Workspace, fileSystem: WorkspaceFileSystem): WorkspaceChangeSummary {
-        return get(workspace, fileSystem).reset(workspace).also { _summaries.value = _summaries.value + (workspace.id to it) }
-    }
+    suspend fun startAndRefresh(workspace: Workspace, fileSystem: WorkspaceFileSystem): WorkspaceChangeSummary { val tracker = get(workspace, fileSystem); tracker.start(workspace); return tracker.refresh(workspace).also { _summaries.value = _summaries.value + (workspace.id to it) } }
+    suspend fun refresh(workspace: Workspace, fileSystem: WorkspaceFileSystem): WorkspaceChangeSummary { return get(workspace, fileSystem).refresh(workspace).also { _summaries.value = _summaries.value + (workspace.id to it) } }
+    suspend fun reset(workspace: Workspace, fileSystem: WorkspaceFileSystem): WorkspaceChangeSummary { return get(workspace, fileSystem).reset(workspace).also { _summaries.value = _summaries.value + (workspace.id to it) } }
 }
