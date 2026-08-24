@@ -1,5 +1,7 @@
 package com.mrredhood.nexus.ui
 
+import android.content.Intent
+import android.net.Uri
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -18,6 +20,8 @@ import androidx.compose.material.icons.outlined.Security
 import androidx.compose.material.icons.outlined.SmartToy
 import androidx.compose.material.icons.outlined.Terminal
 import androidx.compose.material.icons.outlined.Tune
+import androidx.compose.material.icons.outlined.CloudUpload
+import androidx.compose.material.icons.outlined.OpenInNew
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.DropdownMenu
@@ -35,9 +39,11 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -46,18 +52,75 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import com.mrredhood.nexus.core.settings.ApiKeyStore
 import com.mrredhood.nexus.core.settings.NexusSettings
+import com.mrredhood.nexus.core.workspace.BuildArtifact
+import com.mrredhood.nexus.core.workspace.BuildRun
+import com.mrredhood.nexus.core.workspace.GitHubActionsBuildService
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(settings: NexusSettings, onUpdate: ((NexusSettings) -> NexusSettings) -> Unit, onBack: () -> Unit) {
     val context = LocalContext.current
     val githubTokenStore = remember { ApiKeyStore(context) }
+    val buildService = remember { GitHubActionsBuildService() }
+    val scope = rememberCoroutineScope()
     var githubToken by remember { mutableStateOf("") }
     var githubTokenConfigured by remember { mutableStateOf(githubTokenStore.has("github")) }
+    var buildRepository by remember { mutableStateOf("") }
+    var buildVariant by remember { mutableStateOf("debug") }
+    var buildRuns by remember { mutableStateOf<List<BuildRun>>(emptyList()) }
+    var selectedArtifacts by remember { mutableStateOf<List<BuildArtifact>>(emptyList()) }
+    var building by remember { mutableStateOf(false) }
+    var buildError by remember { mutableStateOf<String?>(null) }
+    var expandedBuildVariant by remember { mutableStateOf(false) }
     val permissionMode = when (settings.workspacePermission.lowercase()) {
         "restricted", "never" -> "never"
         "some", "standard" -> "some"
         else -> "autonomous"
+    }
+
+    fun refreshBuilds() {
+        val repository = buildRepository.trim()
+        val token = githubTokenStore.get("github")
+        if (repository.isBlank() || token.isNullOrBlank()) return
+        scope.launch {
+            buildError = null
+            runCatching { buildService.latestRuns(repository, token, "main") }
+                .onSuccess { buildRuns = it }
+                .onFailure { buildError = it.message ?: "Unable to load GitHub Actions runs." }
+        }
+    }
+
+    fun startBuild() {
+        val repository = buildRepository.trim()
+        val token = githubTokenStore.get("github")
+        if (repository.isBlank()) { buildError = "Enter the GitHub repository as owner/name."; return }
+        if (token.isNullOrBlank()) { buildError = "Configure a GitHub token first."; return }
+        scope.launch {
+            building = true
+            buildError = null
+            selectedArtifacts = emptyList()
+            runCatching { buildService.dispatch(repository, token, "main", buildVariant) }
+                .onFailure { buildError = it.message ?: "Unable to start the build." }
+            if (buildError == null) {
+                repeat(60) {
+                    delay(settings.ciRefreshSeconds.coerceIn(5, 60) * 1000L)
+                    val runs = runCatching { buildService.latestRuns(repository, token, "main") }.getOrElse { emptyList() }
+                    buildRuns = runs
+                    val run = runs.firstOrNull()
+                    if (run != null && run.isFinished) {
+                        selectedArtifacts = runCatching { buildService.artifacts(repository, token, run.id) }.getOrElse { emptyList() }
+                        return@repeat
+                    }
+                }
+            }
+            building = false
+        }
+    }
+
+    LaunchedEffect(buildRepository, githubTokenConfigured) {
+        if (githubTokenConfigured && buildRepository.isNotBlank()) refreshBuilds()
     }
 
     Scaffold(
@@ -127,17 +190,12 @@ fun SettingsScreen(settings: NexusSettings, onUpdate: ((NexusSettings) -> NexusS
                     visualTransformation = PasswordVisualTransformation()
                 )
                 Row(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    FilledTonalButton(
-                        enabled = githubToken.isNotBlank(),
-                        onClick = {
-                            githubTokenStore.put("github", githubToken.trim())
-                            githubToken = ""
-                            githubTokenConfigured = true
-                        }
-                    ) { Text(if (githubTokenConfigured) "Replace token" else "Save token") }
-                    if (githubTokenConfigured) {
-                        TextButton(onClick = { githubTokenStore.remove("github"); githubToken = ""; githubTokenConfigured = false }) { Text("Remove token") }
-                    }
+                    FilledTonalButton(enabled = githubToken.isNotBlank(), onClick = {
+                        githubTokenStore.put("github", githubToken.trim())
+                        githubToken = ""
+                        githubTokenConfigured = true
+                    }) { Text(if (githubTokenConfigured) "Replace token" else "Save token") }
+                    if (githubTokenConfigured) TextButton(onClick = { githubTokenStore.remove("github"); githubToken = ""; githubTokenConfigured = false }) { Text("Remove token") }
                 }
                 Text("Nexus encrypts the token with Android Keystore and never puts it in project files.", style = MaterialTheme.typography.labelSmall)
             }
@@ -147,9 +205,79 @@ fun SettingsScreen(settings: NexusSettings, onUpdate: ((NexusSettings) -> NexusS
                 ChoiceRow("Refresh interval", "${settings.ciRefreshSeconds}s", listOf("5s", "10s", "30s", "60s")) { v -> onUpdate { it.copy(ciRefreshSeconds = v.removeSuffix("s").toInt()) } }
             }
 
+            SettingsSection("Cloud Build", Icons.Outlined.CloudUpload) {
+                Text("Build Android APKs on GitHub Actions without installing SDKs in Nexus.", style = MaterialTheme.typography.bodySmall)
+                OutlinedTextField(
+                    value = buildRepository,
+                    onValueChange = { buildRepository = it },
+                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                    label = { Text("Repository") },
+                    placeholder = { Text("owner/name") },
+                    singleLine = true
+                )
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Box(Modifier.weight(1f)) {
+                        OutlinedButton(onClick = { expandedBuildVariant = true }, modifier = Modifier.fillMaxWidth()) { Text("${buildVariant.replaceFirstChar { it.uppercase() }} APK") }
+                        DropdownMenu(expanded = expandedBuildVariant, onDismissRequest = { expandedBuildVariant = false }) {
+                            listOf("debug", "release").forEach { variant -> DropdownMenuItem(text = { Text("${variant.replaceFirstChar { it.uppercase() }} APK") }, onClick = { buildVariant = variant; expandedBuildVariant = false }) }
+                        }
+                    }
+                    FilledTonalButton(enabled = !building && githubTokenConfigured && buildRepository.isNotBlank(), onClick = ::startBuild) {
+                        Icon(Icons.Outlined.CloudUpload, null)
+                        Spacer(Modifier.padding(2.dp))
+                        Text(if (building) "Building…" else "Build")
+                    }
+                }
+                if (building) Text("GitHub Actions is running. Nexus will keep polling the run and will not cancel it.", style = MaterialTheme.typography.labelMedium)
+                buildError?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
+
+                buildRuns.take(5).forEach { run ->
+                    Card(shape = MaterialTheme.shapes.large, colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)) {
+                        Column(Modifier.fillMaxWidth().padding(14.dp)) {
+                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                Text(run.statusLabel(), style = MaterialTheme.typography.titleSmall)
+                                Text(run.commitSha.take(7), style = MaterialTheme.typography.labelMedium)
+                            }
+                            Text("${run.branch} · ${run.createdAt.replace('T', ' ').substringBefore('.')}", style = MaterialTheme.typography.bodySmall)
+                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                                TextButton(onClick = { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(run.url))) }) { Icon(Icons.Outlined.OpenInNew, null); Spacer(Modifier.padding(2.dp)); Text("Open run") }
+                            }
+                        }
+                    }
+                }
+
+                selectedArtifacts.forEach { artifact ->
+                    Card(shape = MaterialTheme.shapes.large) {
+                        Row(Modifier.fillMaxWidth().padding(14.dp), horizontalArrangement = Arrangement.SpaceBetween) {
+                            Column(Modifier.weight(1f)) {
+                                Text(artifact.name, style = MaterialTheme.typography.titleSmall)
+                                Text(formatBytes(artifact.sizeBytes), style = MaterialTheme.typography.bodySmall)
+                            }
+                            TextButton(onClick = { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(buildRuns.firstOrNull()?.url ?: "https://github.com"))) }) { Text("Open") }
+                        }
+                    }
+                }
+                if (buildRuns.isEmpty() && !building) Text("Enter a repository and configure a token to see build history.", style = MaterialTheme.typography.labelSmall)
+            }
+
             Spacer(Modifier.padding(bottom = 12.dp))
         }
     }
+}
+
+private fun BuildRun.statusLabel(): String = when {
+    status == "completed" && conclusion == "success" -> "Passed"
+    status == "completed" && conclusion == "failure" -> "Failed"
+    status == "completed" -> "Completed · ${conclusion ?: "unknown"}"
+    status == "in_progress" -> "Running"
+    status == "queued" -> "Queued"
+    else -> status.replace('_', ' ').replaceFirstChar { it.uppercase() }
+}
+
+private fun formatBytes(bytes: Long): String = when {
+    bytes >= 1024L * 1024L -> "%.1f MB".format(bytes / 1024f / 1024f)
+    bytes >= 1024L -> "%.1f KB".format(bytes / 1024f)
+    else -> "$bytes B"
 }
 
 @Composable
@@ -184,16 +312,9 @@ fun ChoiceRow(title: String, selected: String, options: List<String>, onSelect: 
     Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
         Text(title, modifier = Modifier.weight(1f).padding(top = 14.dp))
         Box(modifier = Modifier.weight(1f)) {
-            OutlinedButton(onClick = { expanded = true }, modifier = Modifier.fillMaxWidth()) {
-                Text(selected.replace('_', ' '))
-            }
+            OutlinedButton(onClick = { expanded = true }, modifier = Modifier.fillMaxWidth()) { Text(selected.replace('_', ' ')) }
             DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-                options.forEach { option ->
-                    DropdownMenuItem(
-                        text = { Text(option.replace('_', ' ')) },
-                        onClick = { expanded = false; onSelect(option) }
-                    )
-                }
+                options.forEach { option -> DropdownMenuItem(text = { Text(option.replace('_', ' ')) }, onClick = { expanded = false; onSelect(option) }) }
             }
         }
     }
