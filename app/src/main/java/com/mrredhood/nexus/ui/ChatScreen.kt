@@ -77,6 +77,7 @@ fun ChatScreen(project: NexusProject, workspace: Workspace, context: ChatContext
     val modelError by settingsVm.modelError.collectAsStateWithLifecycle()
     val androidContext = LocalContext.current
     val contextService = remember(androidContext) { WorkspaceContextService(WorkspaceFileSystem(androidContext.applicationContext)) }
+    val fileSystem = remember(androidContext) { WorkspaceFileSystem(androidContext.applicationContext) }
     var input by remember { mutableStateOf("") }
     var showContextInspector by remember { mutableStateOf(false) }
     var showModelMenu by remember { mutableStateOf(false) }
@@ -84,12 +85,14 @@ fun ChatScreen(project: NexusProject, workspace: Workspace, context: ChatContext
     var copiedMessageIndex by remember { mutableStateOf<Int?>(null) }
     val listState = rememberLazyListState()
     val workspaceContext = liveContexts[workspace.id] ?: context
+    var chatContext by remember(workspace.id) { mutableStateOf(workspaceContext) }
 
     LaunchedEffect(workspace.id, featureSettings.provider) {
         vm.open(workspace)
         runCatching { contextService.refresh(workspace) }
         settingsVm.loadModels(featureSettings.provider)
     }
+    LaunchedEffect(workspaceContext) { chatContext = workspaceContext }
     LaunchedEffect(messages.size, messages.lastOrNull()?.content) {
         if (messages.isNotEmpty()) listState.animateScrollToItem(messages.lastIndex)
     }
@@ -152,6 +155,13 @@ fun ChatScreen(project: NexusProject, workspace: Workspace, context: ChatContext
             }
         }
 
+        ChatContextAttachmentPanel(
+            workspace = workspace,
+            fileSystem = fileSystem,
+            context = chatContext,
+            onContextChanged = { chatContext = it }
+        )
+
         LazyColumn(state = listState, modifier = Modifier.weight(1f).fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             itemsIndexed(messages) { index, message ->
                 val assistant = message.role == "assistant"
@@ -163,11 +173,8 @@ fun ChatScreen(project: NexusProject, workspace: Workspace, context: ChatContext
                             if (message.content.isNotBlank() && !generating) {
                                 Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
                                     IconButton(onClick = { copyMessage(index, message.content) }) { Icon(Icons.Outlined.ContentCopy, if (copiedMessageIndex == index) "Copied" else "Copy") }
-                                    if (!assistant) {
-                                        IconButton(onClick = { input = message.content }) { Icon(Icons.Outlined.Edit, "Edit message") }
-                                    } else if (previousUser != null) {
-                                        IconButton(onClick = { vm.regenerate(index, workspaceContext) }) { Icon(Icons.Outlined.Refresh, "Regenerate response") }
-                                    }
+                                    if (!assistant) IconButton(onClick = { input = message.content }) { Icon(Icons.Outlined.Edit, "Edit message") }
+                                    else if (previousUser != null) IconButton(onClick = { vm.regenerate(index, chatContext) }) { Icon(Icons.Outlined.Refresh, "Regenerate response") }
                                 }
                             }
                         }
@@ -217,7 +224,7 @@ fun ChatScreen(project: NexusProject, workspace: Workspace, context: ChatContext
 
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             OutlinedTextField(value = input, onValueChange = { input = it }, modifier = Modifier.weight(1f).heightIn(min = 52.dp, max = 150.dp), placeholder = { Text("Ask Nexus about your code…  @file  /command") }, maxLines = 6, enabled = !generating)
-            IconButton(onClick = { if (generating) vm.stop() else { vm.send(input, workspaceContext); input = "" } }) { Icon(if (generating) Icons.Outlined.Stop else Icons.Outlined.Send, if (generating) "Stop" else "Send") }
+            IconButton(onClick = { if (generating) vm.stop() else { vm.send(input, chatContext); input = "" } }) { Icon(if (generating) Icons.Outlined.Stop else Icons.Outlined.Send, if (generating) "Stop" else "Send") }
         }
     }
 }
