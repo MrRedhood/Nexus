@@ -3,6 +3,12 @@ package com.mrredhood.nexus.ui
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -13,6 +19,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -44,6 +51,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -105,12 +113,7 @@ fun ChatScreen(
 
     Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
         Column(Modifier.fillMaxSize()) {
-            // Deliberately no model name or model selector in the header.
-            Row(
-                Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.End
-            ) {
+            Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.End) {
                 if (usage.total > 0) Text("${usage.total} tokens", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 IconButton(onClick = vm::clear, enabled = !generating) { Icon(Icons.Outlined.DeleteSweep, "Clear chat") }
                 onClose?.let { IconButton(onClick = it) { Text("×", style = MaterialTheme.typography.titleLarge) } }
@@ -126,11 +129,7 @@ fun ChatScreen(
                     val assistant = message.role == "assistant"
                     val content = message.content
                     Box(Modifier.fillMaxWidth(), contentAlignment = if (assistant) Alignment.CenterStart else Alignment.CenterEnd) {
-                        Column(
-                            Modifier.fillMaxWidth(if (assistant) 0.94f else 0.84f).widthIn(max = 820.dp),
-                            horizontalAlignment = if (assistant) Alignment.Start else Alignment.End,
-                            verticalArrangement = Arrangement.spacedBy(5.dp)
-                        ) {
+                        Column(Modifier.fillMaxWidth(if (assistant) 0.94f else 0.84f).widthIn(max = 820.dp), horizontalAlignment = if (assistant) Alignment.Start else Alignment.End, verticalArrangement = Arrangement.spacedBy(5.dp)) {
                             if (assistant) {
                                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                     Surface(shape = CircleShape, color = MaterialTheme.colorScheme.primaryContainer) {
@@ -138,7 +137,12 @@ fun ChatScreen(
                                     }
                                     Text("Nexus", style = MaterialTheme.typography.labelMedium)
                                 }
-                                Text(content.ifBlank { "Thinking…" }, style = MaterialTheme.typography.bodyLarge)
+                                if (generating && index == messages.lastIndex) {
+                                    NexusWorkingIndicator()
+                                    if (content.isNotBlank()) Text(content, style = MaterialTheme.typography.bodyLarge)
+                                } else {
+                                    Text(content.ifBlank { "Thinking…" }, style = MaterialTheme.typography.bodyLarge)
+                                }
                             } else {
                                 Surface(shape = RoundedCornerShape(22.dp), color = MaterialTheme.colorScheme.surfaceVariant) {
                                     Text(content, Modifier.padding(horizontal = 15.dp, vertical = 11.dp), style = MaterialTheme.typography.bodyLarge)
@@ -155,14 +159,11 @@ fun ChatScreen(
                         }
                     }
                 }
-
                 if (proposals.isNotEmpty()) {
                     item {
                         Column(Modifier.fillMaxWidth().widthIn(max = 820.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                             Text("Nexus actions", style = MaterialTheme.typography.titleMedium)
-                            proposals.forEach { proposal ->
-                                ActionRow(proposal, executions[proposal.id], vm::approveAction, vm::rejectAction)
-                            }
+                            proposals.forEach { proposal -> ActionRow(proposal, executions[proposal.id], vm::approveAction, vm::rejectAction) }
                         }
                     }
                 }
@@ -180,76 +181,25 @@ fun ChatScreen(
                     }
                     Spacer(Modifier.heightIn(min = 5.dp))
                 }
-
-                Surface(
-                    Modifier.fillMaxWidth().widthIn(max = 820.dp).align(Alignment.CenterHorizontally),
-                    shape = RoundedCornerShape(28.dp),
-                    color = MaterialTheme.colorScheme.surface,
-                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
-                ) {
+                Surface(Modifier.fillMaxWidth().widthIn(max = 820.dp).align(Alignment.CenterHorizontally), shape = RoundedCornerShape(28.dp), color = MaterialTheme.colorScheme.surface, border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) {
                     Column(Modifier.padding(horizontal = 7.dp, vertical = 6.dp)) {
                         Row(verticalAlignment = Alignment.Bottom) {
                             IconButton(onClick = { showTools = !showTools }) { Icon(Icons.Outlined.Tune, "Tools") }
-                            OutlinedTextField(
-                                value = input,
-                                onValueChange = { input = it },
-                                modifier = Modifier.weight(1f).heightIn(min = 46.dp, max = 150.dp),
-                                placeholder = { Text("Message Nexus…") },
-                                maxLines = 6,
-                                enabled = !generating,
-                                shape = RoundedCornerShape(22.dp),
-                                colors = androidx.compose.material3.OutlinedTextFieldDefaults.colors(
-                                    unfocusedContainerColor = MaterialTheme.colorScheme.surface,
-                                    focusedContainerColor = MaterialTheme.colorScheme.surface,
-                                    unfocusedBorderColor = MaterialTheme.colorScheme.surface,
-                                    focusedBorderColor = MaterialTheme.colorScheme.surface
-                                )
-                            )
-                            Surface(
-                                onClick = { if (generating) vm.stop() else if (input.isNotBlank()) { vm.send(input, chatContext); input = "" } },
-                                enabled = generating || input.isNotBlank(),
-                                shape = CircleShape,
-                                color = if (generating) MaterialTheme.colorScheme.surfaceVariant else MaterialTheme.colorScheme.onSurface
-                            ) {
+                            OutlinedTextField(value = input, onValueChange = { input = it }, modifier = Modifier.weight(1f).heightIn(min = 46.dp, max = 150.dp), placeholder = { Text("Message Nexus…") }, maxLines = 6, enabled = !generating, shape = RoundedCornerShape(22.dp), colors = androidx.compose.material3.OutlinedTextFieldDefaults.colors(unfocusedContainerColor = MaterialTheme.colorScheme.surface, focusedContainerColor = MaterialTheme.colorScheme.surface, unfocusedBorderColor = MaterialTheme.colorScheme.surface, focusedBorderColor = MaterialTheme.colorScheme.surface))
+                            Surface(onClick = { if (generating) vm.stop() else if (input.isNotBlank()) { vm.send(input, chatContext); input = "" } }, enabled = generating || input.isNotBlank(), shape = CircleShape, color = if (generating) MaterialTheme.colorScheme.surfaceVariant else MaterialTheme.colorScheme.onSurface) {
                                 Box(Modifier.padding(10.dp)) { Icon(if (generating) Icons.Outlined.Stop else Icons.Outlined.ArrowUpward, if (generating) "Stop" else "Send", tint = if (generating) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.surface) }
                             }
                         }
-
-                        // The single model control lives with the message composer.
                         Row(Modifier.fillMaxWidth().padding(start = 4.dp, top = 2.dp), verticalAlignment = Alignment.CenterVertically) {
-                            Surface(
-                                onClick = { showModelMenu = true },
-                                shape = RoundedCornerShape(12.dp),
-                                color = MaterialTheme.colorScheme.surfaceVariant
-                            ) {
-                                Text(
-                                    featureSettings.model.ifBlank { "Choose model" },
-                                    Modifier.padding(horizontal = 11.dp, vertical = 7.dp),
-                                    style = MaterialTheme.typography.labelMedium,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
+                            Surface(onClick = { showModelMenu = true }, shape = RoundedCornerShape(12.dp), color = MaterialTheme.colorScheme.surfaceVariant) {
+                                Text(featureSettings.model.ifBlank { "Choose model" }, Modifier.padding(horizontal = 11.dp, vertical = 7.dp), style = MaterialTheme.typography.labelMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
                             }
                             DropdownMenu(expanded = showModelMenu, onDismissRequest = { showModelMenu = false }) {
-                                if (loadingModels) {
-                                    DropdownMenuItem(text = { Text("Loading models…") }, onClick = {})
-                                } else if (models.isEmpty()) {
-                                    DropdownMenuItem(text = { Text(modelError ?: "No models available") }, onClick = { settingsVm.loadModels(featureSettings.provider) })
-                                } else {
-                                    models.take(100).forEach { model ->
-                                        DropdownMenuItem(
-                                            text = { Column { Text(model.name); Text(model.id, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant) } },
-                                            onClick = {
-                                                settingsVm.update { it.copy(model = model.id, apiKeyConfigured = settingsVm.hasApiKey(model.provider)) }
-                                                showModelMenu = false
-                                            }
-                                        )
-                                    }
-                                }
+                                if (loadingModels) DropdownMenuItem(text = { Text("Loading models…") }, onClick = {})
+                                else if (models.isEmpty()) DropdownMenuItem(text = { Text(modelError ?: "No models available") }, onClick = { settingsVm.loadModels(featureSettings.provider) })
+                                else models.take(100).forEach { model -> DropdownMenuItem(text = { Column { Text(model.name); Text(model.id, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant) } }, onClick = { settingsVm.update { it.copy(model = model.id, apiKeyConfigured = settingsVm.hasApiKey(model.provider)) }; showModelMenu = false }) }
                             }
-                            if (showTools) {
-                                Text("  ·  @file  ·  /commands", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            }
+                            if (showTools) Text("  ·  @file  ·  /commands", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                     }
                 }
@@ -260,12 +210,25 @@ fun ChatScreen(
 }
 
 @Composable
-private fun ActionRow(
-    proposal: NexusActionProposal,
-    execution: com.mrredhood.nexus.core.ai.NexusActionExecutionSummary?,
-    onApprove: (String) -> Unit,
-    onReject: (String) -> Unit
-) {
+private fun NexusWorkingIndicator() {
+    val transition = rememberInfiniteTransition(label = "nexus-working")
+    val rotation by transition.animateFloat(0f, 360f, infiniteRepeatable(tween(900, easing = LinearEasing)), label = "rotation")
+    val pulse by transition.animateFloat(0.55f, 1f, infiniteRepeatable(tween(650), RepeatMode.Reverse), label = "pulse")
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(vertical = 4.dp)) {
+        Surface(shape = CircleShape, color = MaterialTheme.colorScheme.primaryContainer) {
+            Text("⚒", Modifier.padding(horizontal = 8.dp, vertical = 6.dp).rotate(rotation), style = MaterialTheme.typography.labelLarge)
+        }
+        Text("Nexus is working…", style = MaterialTheme.typography.labelMedium.copy(color = MaterialTheme.colorScheme.primary).copy(alpha = pulse))
+        Row(horizontalArrangement = Arrangement.spacedBy(3.dp)) {
+            repeat(3) { i ->
+                Surface(Modifier.size(5.dp), shape = CircleShape, color = MaterialTheme.colorScheme.primary.copy(alpha = if (i == 0) pulse else 0.35f)) {}
+            }
+        }
+    }
+}
+
+@Composable
+private fun ActionRow(proposal: NexusActionProposal, execution: com.mrredhood.nexus.core.ai.NexusActionExecutionSummary?, onApprove: (String) -> Unit, onReject: (String) -> Unit) {
     val action = proposal.action
     Card(Modifier.fillMaxWidth(), shape = MaterialTheme.shapes.large) {
         Row(Modifier.fillMaxWidth().padding(13.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
