@@ -21,6 +21,7 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -47,6 +48,7 @@ import com.mrredhood.nexus.core.workspace.Workspace
 import com.mrredhood.nexus.core.workspace.WorkspaceFileSystem
 import kotlinx.coroutines.launch
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun GitScreen(project: NexusProject, workspace: Workspace, onBack: () -> Unit) {
     val context = androidx.compose.ui.platform.LocalContext.current
@@ -117,40 +119,38 @@ fun GitScreen(project: NexusProject, workspace: Workspace, onBack: () -> Unit) {
                     status?.let { Text("Remote commit · ${it.remoteCommit.take(7)}", style = MaterialTheme.typography.labelMedium) }
                 }
             }
-
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                FilledTonalButton(enabled = !loading && repository.isNotBlank(), onClick = ::fetch, modifier = Modifier.weight(1f)) { Icon(Icons.Outlined.CloudDownload, null); Spacer(Modifier.padding(horizontal = 3.dp)); Text("Fetch") }
-                FilledTonalButton(enabled = !loading && repository.isNotBlank(), onClick = { showCommit = true }, modifier = Modifier.weight(1f)) { Icon(Icons.Outlined.CloudUpload, null); Spacer(Modifier.padding(horizontal = 3.dp)); Text("Commit & Push") }
-            }
-
-            if (loading) CircularProgressIndicator(modifier = Modifier.padding(8.dp))
-            info?.let { Card(Modifier.fillMaxWidth(), shape = MaterialTheme.shapes.large) { Text(it, Modifier.padding(14.dp), style = MaterialTheme.typography.bodyMedium) } }
-            error?.let { Card(Modifier.fillMaxWidth(), shape = MaterialTheme.shapes.large, colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)) { Text(it, Modifier.padding(14.dp), color = MaterialTheme.colorScheme.onErrorContainer) } }
-
-            status?.let { sync ->
-                Text("Changes", style = MaterialTheme.typography.titleMedium)
-                val items = buildList {
-                    sync.added.forEach { add("Added · $it") }
-                    sync.changed.forEach { add("Modified · $it") }
-                    sync.deleted.forEach { add("Deleted · $it") }
+            if (loading) CircularProgressIndicator()
+            error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+            info?.let { Text(it, color = MaterialTheme.colorScheme.primary) }
+            status?.let { s ->
+                Card(Modifier.fillMaxWidth(), shape = MaterialTheme.shapes.large) {
+                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text("Working tree", style = MaterialTheme.typography.titleMedium)
+                        Text("${s.changed.size} modified · ${s.added.size} added · ${s.deleted.size} deleted · ${s.unchanged} unchanged")
+                    }
                 }
-                if (items.isEmpty()) Card(Modifier.fillMaxWidth(), shape = MaterialTheme.shapes.large) { Text("Working tree matches the selected GitHub branch.", Modifier.padding(16.dp)) }
-                else LazyColumn(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(8.dp)) { items(items) { change -> Card(Modifier.fillMaxWidth(), shape = MaterialTheme.shapes.large) { Text(change, Modifier.padding(14.dp)) } } }
+                val changes = (s.changed + s.added).distinct().sorted()
+                if (s.deleted.isNotEmpty()) changes.plus(s.deleted).distinct().sorted()
+                LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    items(changes) { path -> Text(path, modifier = Modifier.padding(vertical = 4.dp)) }
+                }
+            } ?: Spacer(Modifier.weight(1f))
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FilledTonalButton(enabled = !loading && repository.isNotBlank(), onClick = ::fetch, modifier = Modifier.weight(1f)) { Icon(Icons.Outlined.CloudDownload, null); Text("Fetch") }
+                FilledTonalButton(enabled = !loading && repository.isNotBlank(), onClick = { showCommit = true }, modifier = Modifier.weight(1f)) { Icon(Icons.Outlined.CloudUpload, null); Text("Commit & Push") }
             }
+            Spacer(Modifier.height(4.dp))
         }
     }
 
-    if (showCommit) CommitDialog(onDismiss = { showCommit = false }, onCommit = ::commit)
-}
-
-@Composable
-private fun CommitDialog(onDismiss: () -> Unit, onCommit: (String) -> Unit) {
-    var message by remember { mutableStateOf("") }
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("Commit changes") },
-        text = { OutlinedTextField(value = message, onValueChange = { message = it }, modifier = Modifier.fillMaxWidth(), label = { Text("Commit message") }, placeholder = { Text("Describe your changes") }, minLines = 2) },
-        confirmButton = { FilledTonalButton(enabled = message.isNotBlank(), onClick = { onCommit(message.trim()) }) { Text("Commit & Push") } },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
-    )
+    if (showCommit) {
+        var message by remember { mutableStateOf("Update from Nexus") }
+        AlertDialog(
+            onDismissRequest = { showCommit = false },
+            title = { Text("Commit changes") },
+            text = { OutlinedTextField(value = message, onValueChange = { message = it }, label = { Text("Commit message") }, singleLine = true) },
+            confirmButton = { TextButton(enabled = message.isNotBlank(), onClick = { commit(message) }) { Text("Commit & Push") } },
+            dismissButton = { TextButton(onClick = { showCommit = false }) { Text("Cancel") } }
+        )
+    }
 }
