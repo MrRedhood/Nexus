@@ -2,19 +2,15 @@ package com.mrredhood.nexus.core.workspace
 
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.withContext
 import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.coroutines.coroutineContext
 
-/** A file-level change relative to the workspace snapshot captured when tracking started. */
-data class WorkspaceChange(
-    val relativePath: String,
-    val status: WorkspaceChangeStatus,
-    val additions: Int,
-    val deletions: Int
-)
-
+data class WorkspaceChange(val relativePath: String, val status: WorkspaceChangeStatus, val additions: Int, val deletions: Int)
 enum class WorkspaceChangeStatus { CREATED, MODIFIED, DELETED }
 
 data class WorkspaceChangeSummary(
@@ -27,10 +23,6 @@ data class WorkspaceChangeSummary(
     val deleted: Int get() = changes.count { it.status == WorkspaceChangeStatus.DELETED }
 }
 
-/**
- * Tracks text-file changes made after a workspace is opened. The baseline is
- * intentionally independent of Git so it also works for non-Git workspaces.
- */
 class WorkspaceChangeTracker(private val fileSystem: WorkspaceFileSystem) {
     private var workspaceId: String? = null
     private var baseline: Map<String, String> = emptyMap()
@@ -47,8 +39,7 @@ class WorkspaceChangeTracker(private val fileSystem: WorkspaceFileSystem) {
             workspaceId = workspace.id
             return@withContext WorkspaceChangeSummary()
         }
-        val current = snapshot(workspace)
-        buildSummary(baseline, current)
+        buildSummary(baseline, snapshot(workspace))
     }
 
     suspend fun reset(workspace: Workspace): WorkspaceChangeSummary = withContext(Dispatchers.IO) {
@@ -66,8 +57,9 @@ class WorkspaceChangeTracker(private val fileSystem: WorkspaceFileSystem) {
                 if (entry.type == EntryType.DIRECTORY) {
                     if (entry.name !in EXCLUDED_DIRECTORIES) walk(entry.relativePath)
                 } else if (entry.sizeBytes in 0..MAX_FILE_BYTES && isTextLike(entry.name, entry.mimeType)) {
-                    runCatching { fileSystem.read(workspace, entry.relativePath) }
-                        .onSuccess { file -> if (!file.content.take(4096).contains('\u0000')) files[file.relativePath] = normalize(file.content) }
+                    runCatching { fileSystem.read(workspace, entry.relativePath) }.onSuccess { file ->
+                        if (!file.content.take(4096).contains('\u0000')) files[file.relativePath] = normalize(file.content)
+                    }
                 }
             }
         }
@@ -96,7 +88,6 @@ class WorkspaceChangeTracker(private val fileSystem: WorkspaceFileSystem) {
     private fun normalize(content: String): String = content.replace("\r\n", "\n").replace('\r', '\n')
     private fun String.lineCount(): Int = if (isEmpty()) 0 else split('\n').size
 
-    /** Myers line diff; modified lines count as one deletion plus one addition. */
     private fun lineDiffCounts(a: List<String>, b: List<String>): Pair<Int, Int> {
         val n = a.size
         val m = b.size
@@ -110,18 +101,19 @@ class WorkspaceChangeTracker(private val fileSystem: WorkspaceFileSystem) {
         for (d in 0..max) {
             for (k in -d..d step 2) {
                 val index = offset + k
-                var x = when {
+                val xStart = when {
                     k == -d -> v[index + 1]
                     k == d -> v[index - 1] + 1
                     v[index - 1] < v[index + 1] -> v[index + 1]
                     else -> v[index - 1] + 1
                 }
+                var x = xStart
                 var y = x - k
                 while (x < n && y < m && a[x] == b[y]) { x++; y++ }
                 v[index] = x
                 if (x >= n && y >= m) {
                     trace += v.copyOf()
-                    return backtrackCounts(trace, a.size, b.size, offset)
+                    return backtrackCounts(trace, n, m, offset)
                 }
             }
             trace += v.copyOf()
@@ -170,6 +162,22 @@ class WorkspaceChangeTracker(private val fileSystem: WorkspaceFileSystem) {
 
 object WorkspaceChangeTrackerRegistry {
     private val trackers = ConcurrentHashMap<String, WorkspaceChangeTracker>()
-    fun get(workspace: Workspace, fileSystem: WorkspaceFileSystem): WorkspaceChangeTracker =
-        trackers.getOrPut(workspace.id) { WorkspaceChangeTracker(fileSystem) }
+    private val _summaries = MutableStateFlow<Map<String, WorkspaceChangeSummary>>(emptyMap())
+    val summaries: StateFlow<Map<String, WorkspaceChangeSummary>> = _summaries.asStateFlow()
+
+    fun get(workspace: Workspace, fileSystem: WorkspaceFileSystem): WorkspaceChangeTracker = trackers.getOrPut(workspace.id) { WorkspaceChangeTracker(fileSystem) }
+
+    suspend fun startAndRefresh(workspace: Workspace, fileSystem: WorkspaceFileSystem): WorkspaceChangeSummary {
+        val tracker = get(workspace, fileSystem)
+        tracker.start(workspace)
+        return tracker.refresh(workspace).also { _summaries.value = _summaries.value + (workspace.id to it) }
+    }
+
+    suspend fun refresh(workspace: Workspace, fileSystem: WorkspaceFileSystem): WorkspaceChangeSummary {
+        return get(workspace, fileSystem).refresh(workspace).also { _summaries.value = _summaries.value + (workspace.id to it) }
+    }
+
+    suspend fun reset(workspace: Workspace, fileSystem: WorkspaceFileSystem): WorkspaceChangeSummary {
+        return get(workspace, fileSystem).reset(workspace).also { _summaries.value = _summaries.value + (workspace.id to it) }
+    }
 }
