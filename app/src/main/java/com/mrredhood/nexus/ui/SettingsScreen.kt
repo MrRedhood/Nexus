@@ -14,6 +14,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.Code
 import androidx.compose.material.icons.outlined.Memory
+import androidx.compose.material.icons.outlined.Security
 import androidx.compose.material.icons.outlined.SmartToy
 import androidx.compose.material.icons.outlined.Terminal
 import androidx.compose.material.icons.outlined.Tune
@@ -22,13 +23,16 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -37,12 +41,19 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
+import com.mrredhood.nexus.core.settings.ApiKeyStore
 import com.mrredhood.nexus.core.settings.NexusSettings
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(settings: NexusSettings, onUpdate: ((NexusSettings) -> NexusSettings) -> Unit, onBack: () -> Unit) {
+    val context = LocalContext.current
+    val githubTokenStore = remember { ApiKeyStore(context) }
+    var githubToken by remember { mutableStateOf("") }
+    var githubTokenConfigured by remember { mutableStateOf(githubTokenStore.has("github")) }
     val permissionMode = when (settings.workspacePermission.lowercase()) {
         "restricted", "never" -> "never"
         "some", "standard" -> "some"
@@ -97,6 +108,38 @@ fun SettingsScreen(settings: NexusSettings, onUpdate: ((NexusSettings) -> NexusS
             SettingsSection("Terminal", Icons.Outlined.Terminal) {
                 ChoiceRow("Font size", settings.terminalFontSize.toString(), listOf("11", "13", "15", "17")) { v -> onUpdate { it.copy(terminalFontSize = v.toInt()) } }
                 ChoiceRow("Scrollback", settings.terminalScrollback.toString(), listOf("1000", "5000", "10000", "20000")) { v -> onUpdate { it.copy(terminalScrollback = v.toInt()) } }
+            }
+
+            SettingsSection("GitHub", Icons.Outlined.Security) {
+                Text("GitHub token", style = MaterialTheme.typography.titleMedium)
+                Text(
+                    if (githubTokenConfigured) "A token is securely stored on this device. Enter a new token only if you want to replace it."
+                    else "Store a GitHub personal access token to fetch, commit, push and sync repositories from Nexus.",
+                    style = MaterialTheme.typography.bodySmall
+                )
+                OutlinedTextField(
+                    value = githubToken,
+                    onValueChange = { githubToken = it },
+                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                    label = { Text(if (githubTokenConfigured) "Replace GitHub token" else "GitHub token") },
+                    placeholder = { Text("github_pat_…") },
+                    singleLine = true,
+                    visualTransformation = PasswordVisualTransformation()
+                )
+                Row(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FilledTonalButton(
+                        enabled = githubToken.isNotBlank(),
+                        onClick = {
+                            githubTokenStore.put("github", githubToken.trim())
+                            githubToken = ""
+                            githubTokenConfigured = true
+                        }
+                    ) { Text(if (githubTokenConfigured) "Replace token" else "Save token") }
+                    if (githubTokenConfigured) {
+                        TextButton(onClick = { githubTokenStore.remove("github"); githubToken = ""; githubTokenConfigured = false }) { Text("Remove token") }
+                    }
+                }
+                Text("Nexus encrypts the token with Android Keystore and never puts it in project files.", style = MaterialTheme.typography.labelSmall)
             }
 
             SettingsSection("GitHub Actions / CI") {
