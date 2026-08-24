@@ -1,5 +1,6 @@
 package com.mrredhood.nexus.core.ai
 
+import com.mrredhood.nexus.core.settings.NexusSettingsRuntime
 import com.mrredhood.nexus.core.workspace.Workspace
 
 /** Executes Nexus actions and feeds real execution results back to the model. */
@@ -18,10 +19,28 @@ class NexusAgentLoop(
             if (NexusActionPolicy.canAutoExecute(action, permissionMode)) {
                 val result = executor.execute(workspace, action)
                 results += AgentToolResult(action, result)
+            } else if (NexusActionPolicy.isMutating(action)) {
+                val mode = permissionMode.lowercase()
+                val message = if (mode == "never") {
+                    "Workspace change blocked: AI permission is set to Never."
+                } else {
+                    "Workspace change requires approval because AI permission is set to Some."
+                }
+                results += AgentToolResult(action, ActionExecutionResult(false, message))
             }
         }
         return results
     }
+
+    /** Compatibility entry point used by existing chat flows. */
+    suspend fun collectReadOnlyResults(
+        workspace: Workspace,
+        proposals: List<NexusActionProposal>
+    ): List<AgentToolResult> = collectToolResults(
+        workspace,
+        proposals,
+        NexusSettingsRuntime.current().workspacePermission
+    )
 
     fun canContinue(round: Int): Boolean = round < maxRounds
 }
