@@ -11,12 +11,14 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.DeleteSweep
+import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.OpenInNew
+import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.Send
 import androidx.compose.material.icons.outlined.Stop
 import androidx.compose.material3.Button
@@ -141,13 +143,7 @@ fun ChatScreen(project: NexusProject, workspace: Workspace, context: ChatContext
                             DropdownMenuItem(text = { Text(modelError ?: if (loadingModels) "Loading…" else "No matching models") }, onClick = { if (!loadingModels) settingsVm.loadModels(featureSettings.provider) })
                         } else {
                             filteredModels.take(100).forEach { model ->
-                                DropdownMenuItem(
-                                    text = { Column { Text(model.name); Text(model.id, style = MaterialTheme.typography.labelSmall) } },
-                                    onClick = {
-                                        settingsVm.update { it.copy(model = model.id, apiKeyConfigured = settingsVm.hasApiKey(model.provider)) }
-                                        showModelMenu = false
-                                    }
-                                )
+                                DropdownMenuItem(text = { Column { Text(model.name); Text(model.id, style = MaterialTheme.typography.labelSmall) } }, onClick = { settingsVm.update { it.copy(model = model.id, apiKeyConfigured = settingsVm.hasApiKey(model.provider)) }; showModelMenu = false })
                             }
                         }
                     }
@@ -157,16 +153,21 @@ fun ChatScreen(project: NexusProject, workspace: Workspace, context: ChatContext
         }
 
         LazyColumn(state = listState, modifier = Modifier.weight(1f).fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            items(messages) { message ->
-                val index = messages.indexOf(message)
+            itemsIndexed(messages) { index, message ->
                 val assistant = message.role == "assistant"
+                val previousUser = if (assistant) messages.subList(0, index).lastOrNull { it.role == "user" } else null
                 Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = if (assistant) MaterialTheme.colorScheme.surfaceContainerHighest else MaterialTheme.colorScheme.primaryContainer)) {
                     Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                             Text(if (assistant) "Nexus" else "You", style = MaterialTheme.typography.labelMedium)
-                            if (message.content.isNotBlank()) {
-                                IconButton(onClick = { copyMessage(index, message.content) }) {
-                                    Icon(Icons.Outlined.ContentCopy, if (copiedMessageIndex == index) "Copied" else "Copy")
+                            if (message.content.isNotBlank() && !generating) {
+                                Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+                                    IconButton(onClick = { copyMessage(index, message.content) }) { Icon(Icons.Outlined.ContentCopy, if (copiedMessageIndex == index) "Copied" else "Copy") }
+                                    if (!assistant) {
+                                        IconButton(onClick = { input = message.content }) { Icon(Icons.Outlined.Edit, "Edit message") }
+                                    } else if (previousUser != null) {
+                                        IconButton(onClick = { vm.regenerate(index, workspaceContext) }) { Icon(Icons.Outlined.Refresh, "Regenerate response") }
+                                    }
                                 }
                             }
                         }
@@ -187,11 +188,7 @@ fun ChatScreen(project: NexusProject, workspace: Workspace, context: ChatContext
                                 Text(action.type.replace('_', ' ').replaceFirstChar { it.uppercase() }, style = MaterialTheme.typography.titleSmall)
                                 action.path?.let { Text(it, style = MaterialTheme.typography.bodyMedium) }
                                 if (review != null) {
-                                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                                        Text("+${review.additions}", style = MaterialTheme.typography.labelMedium)
-                                        Text("-${review.deletions}", style = MaterialTheme.typography.labelMedium)
-                                        Text(if (review.changed) "Changes ready" else "No changes", style = MaterialTheme.typography.labelMedium)
-                                    }
+                                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) { Text("+${review.additions}", style = MaterialTheme.typography.labelMedium); Text("-${review.deletions}", style = MaterialTheme.typography.labelMedium); Text(if (review.changed) "Changes ready" else "No changes", style = MaterialTheme.typography.labelMedium) }
                                     OutlinedButton(onClick = { expanded = !expanded }, enabled = review.changed) { Text(if (expanded) "Hide diff" else "Review diff") }
                                     if (expanded) Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHighest)) { Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) { review.diff.forEach { line -> val prefix = when (line.kind) { NexusDiffKind.ADD -> "+"; NexusDiffKind.REMOVE -> "-"; NexusDiffKind.CONTEXT -> " " }; Text("$prefix${line.text}", style = MaterialTheme.typography.bodySmall) } } }
                                 } else if (NexusActionPolicy.requiresApproval(action)) Text("Preparing a safe change preview…", style = MaterialTheme.typography.bodySmall)
