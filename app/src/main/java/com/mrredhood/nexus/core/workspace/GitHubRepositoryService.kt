@@ -9,14 +9,6 @@ import java.net.HttpURLConnection
 import java.net.URL
 import java.security.MessageDigest
 
-/**
- * GitHub-backed Git transport for Nexus.
- *
- * Nexus deliberately does not bundle a native Git executable. This service uses the
- * GitHub Git Database API to fetch a branch and create real Git commits from the
- * SAF-backed workspace. The caller supplies a personal access token with repository
- * contents/write permission.
- */
 data class GitHubRemoteFile(val path: String, val sha: String, val size: Long = 0L)
 data class GitHubSyncStatus(
     val branch: String,
@@ -26,54 +18,48 @@ data class GitHubSyncStatus(
     val deleted: List<String>,
     val unchanged: Int
 )
-
 data class GitHubCommitResult(val commitSha: String, val treeSha: String, val message: String)
 
+/** GitHub Git Database transport. Nexus does not bundle a native Git executable. */
 class GitHubRepositoryService(private val fileSystem: WorkspaceFileSystem) {
     suspend fun status(repository: String, branch: String, token: String, workspace: Workspace): GitHubSyncStatus = withContext(Dispatchers.IO) {
         val remote = loadRemoteTree(repository, branch, token)
         val local = collectLocalFiles(workspace)
+        val comparableRemote = remote.files.filterKeys { it in remote.contents }
         val changed = mutableListOf<String>()
         val added = mutableListOf<String>()
         local.forEach { (path, content) ->
-            val remoteFile = remote.files[path]
+            val remoteFile = comparableRemote[path]
             if (remoteFile == null) added += path
             else if (gitBlobSha(content) != remoteFile.sha) changed += path
         }
-        val deleted = remote.files.keys.filter { it !in local.keys }.sorted()
-        GitHubSyncStatus(branch, remote.commitSha, changed.sorted(), added.sorted(), deleted, local.size - changed.size - added.size)
+        val deleted = comparableRemote.keys.filter { it !in local.keys }.sorted()
+        val unchanged = local.count { (path, content) -> comparableRemote[path]?.sha == gitBlobSha(content) }
+        GitHubSyncStatus(branch, remote.commitSha, changed.sorted(), added.sorted(), deleted, unchanged)
     }
 
     suspend fun fetch(repository: String, branch: String, token: String, workspace: Workspace): Int = withContext(Dispatchers.IO) {
         val remote = loadRemoteTree(repository, branch, token)
         var count = 0
-        remote.files.keys.sorted().forEach { path ->
-            val content = remote.contents[path] ?: return@forEach
+        remote.contents.keys.sorted().forEach { path ->
             if (path.startsWith(".git/")) return@forEach
-            fileSystem.write(workspace, path, content, mimeTypeFor(path))
+            fileSystem.write(workspace, path, remote.contents.getValue(path), mimeTypeFor(path))
             count++
         }
         count
     }
 
-    suspend fun commitAndPush(
-        repository: String,
-        branch: String,
-        token: String,
-        workspace: Workspace,
-        message: String
-    ): GitHubCommitResult = withContext(Dispatchers.IO) {
+    suspend fun commitAndPush(repository: String, branch: String, token: String, workspace: Workspace, message: String): GitHubCommitResult = withContext(Dispatchers.IO) {
         require(message.isNotBlank()) { "Commit message is required" }
         val remote = loadRemoteTree(repository, branch, token)
         val local = collectLocalFiles(workspace)
+        val comparableRemote = remote.files.filterKeys { it in remote.contents }
         val entries = mutableListOf<Map<String, Any?>>()
 
         local.forEach { (path, content) ->
-            if (!path.startsWith(".git/")) {
-                entries += mapOf("path" to path, "mode" to "100644", "type" to "blob", "content" to content)
-            }
+            if (!path.startsWith(".git/")) entries += mapOf("path" to path, "mode" to "100644", "type" to "blob", "content" to content)
         }
-        remote.files.keys.filter { it !in local.keys }.forEach { deleted ->
+        comparableRemote.keys.filter { it !in local.keys }.forEach { deleted ->
             entries += mapOf("path" to deleted, "mode" to "100644", "type" to "blob", "sha" to null)
         }
 
@@ -113,7 +99,8 @@ class GitHubRepositoryService(private val fileSystem: WorkspaceFileSystem) {
                 val blob = apiGet("/repos/$repository/git/blobs/$sha", token)
                 if (blob.optString("encoding") == "base64") {
                     val decoded = Base64.decode(blob.getString("content").replace("\n", ""), Base64.DEFAULT)
-                    contents[path] = decoded.toString(Charsets.UTF_8)
+                    val text = decoded.toString(Charsets.UTF_8)
+                    if (text.toByteArray(Charsets.UTF_8).contentEquals(decoded)) contents[path] = text
                 }
             }
         }
@@ -155,10 +142,7 @@ class GitHubRepositoryService(private val fileSystem: WorkspaceFileSystem) {
             setRequestProperty("Authorization", "Bearer $token")
             setRequestProperty("X-GitHub-Api-Version", "2022-11-28")
             setRequestProperty("User-Agent", "Nexus-Android")
-            if (body != null) {
-                doOutput = true
-                setRequestProperty("Content-Type", "application/json; charset=utf-8")
-            }
+            if (body != null) { doOutput = true; setRequestProperty("Content-Type", "application/json; charset=utf-8") }
         }
         body?.toString()?.toByteArray(Charsets.UTF_8)?.let { connection.outputStream.use { stream -> stream.write(it) } }
         val status = connection.responseCode
