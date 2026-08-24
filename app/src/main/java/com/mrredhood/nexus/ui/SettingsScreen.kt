@@ -44,8 +44,23 @@ import com.mrredhood.nexus.core.settings.NexusSettings
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(settings: NexusSettings, onUpdate: ((NexusSettings) -> NexusSettings) -> Unit, onBack: () -> Unit) {
-    Scaffold(topBar = { TopAppBar(title = { Text("Settings") }, navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.Outlined.ArrowBack, "Back") } }) }) { padding ->
-        Column(Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+    val permissionMode = when (settings.workspacePermission.lowercase()) {
+        "restricted" -> "never"
+        "some" -> "some"
+        else -> "autonomous"
+    }
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text("Settings") },
+                navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.Outlined.ArrowBack, "Back") } }
+            )
+        }
+    ) { padding ->
+        Column(
+            Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
             SettingsSection("Appearance", Icons.Outlined.Tune) {
                 ChoiceRow("Theme", settings.theme, listOf("system", "light", "dark", "amoled")) { v -> onUpdate { it.copy(theme = v) } }
                 ChoiceRow("Accent color", settings.accent, listOf("blue", "purple", "cyan", "green", "orange", "red")) { v -> onUpdate { it.copy(accent = v) } }
@@ -86,14 +101,14 @@ fun SettingsScreen(settings: NexusSettings, onUpdate: ((NexusSettings) -> NexusS
                 ToggleRow("Show full path", settings.showFullPath) { v -> onUpdate { it.copy(showFullPath = v) } }
             }
             SettingsSection("Workspace", Icons.Outlined.Memory) {
-                ChoiceRow("AI permission mode", settings.workspacePermission, listOf("restricted", "standard", "full")) { v -> onUpdate { it.copy(workspacePermission = v) } }
                 ChoiceRow("Indexing", settings.indexing, listOf("automatic", "on_open", "manual", "disabled")) { v -> onUpdate { it.copy(indexing = v) } }
                 ChoiceRow("Automatic workspace context", settings.workspaceContext, listOf("never", "smart", "always")) { v -> onUpdate { it.copy(workspaceContext = v) } }
                 ChoiceRow("AI completion", settings.aiCompletion, listOf("off", "manual", "automatic")) { v -> onUpdate { it.copy(aiCompletion = v) } }
                 ToggleRow("Format on save", settings.formatOnSave) { v -> onUpdate { it.copy(formatOnSave = v) } }
                 ToggleRow("Diagnostics", settings.diagnostics) { v -> onUpdate { it.copy(diagnostics = v) } }
             }
-            SettingsSection("AI Context", Icons.Outlined.SmartToy) {
+            SettingsSection("AI", Icons.Outlined.SmartToy) {
+                ChoiceRow("AI permission", permissionMode, listOf("never", "some", "autonomous")) { v -> onUpdate { it.copy(workspacePermission = v) } }
                 ToggleRow("Streaming", settings.aiStreaming) { v -> onUpdate { it.copy(aiStreaming = v) } }
                 ChoiceRow("Maximum context files", settings.maxContextFiles.toString(), listOf("3", "5", "10", "20")) { v -> onUpdate { it.copy(maxContextFiles = v.toInt()) } }
                 ToggleRow("Current file", settings.includeCurrentFile) { v -> onUpdate { it.copy(includeCurrentFile = v) } }
@@ -103,16 +118,9 @@ fun SettingsScreen(settings: NexusSettings, onUpdate: ((NexusSettings) -> NexusS
                 ToggleRow("Workspace summary", settings.includeWorkspaceSummary) { v -> onUpdate { it.copy(includeWorkspaceSummary = v) } }
                 ChoiceRow("Memory approval", settings.memoryApproval, listOf("always", "ask", "never")) { v -> onUpdate { it.copy(memoryApproval = v) } }
             }
-            SettingsSection("Agents & Safety", Icons.Outlined.Security) {
-                ChoiceRow("Agent autonomy", settings.agentAutonomy, listOf("ask_every_time", "approve_risky", "autonomous")) { v -> onUpdate { it.copy(agentAutonomy = v) } }
-                ChoiceRow("Maximum parallel agents", settings.maxParallelAgents.toString(), listOf("1", "2", "3", "4", "8")) { v -> onUpdate { it.copy(maxParallelAgents = v.toInt()) } }
-                ToggleRow("Snapshot before AI edit", settings.snapshotBeforeAiEdit) { v -> onUpdate { it.copy(snapshotBeforeAiEdit = v) } }
-                ChoiceRow("Show diff before applying", settings.showDiffBeforeApply, listOf("always", "risky", "never")) { v -> onUpdate { it.copy(showDiffBeforeApply = v) } }
-                ChoiceRow("Auto-apply patches", settings.autoApplyPatches, listOf("never", "approved", "trusted")) { v -> onUpdate { it.copy(autoApplyPatches = v) } }
-            }
             SettingsSection("Terminal", Icons.Outlined.Terminal) {
                 ChoiceRow("Font size", settings.terminalFontSize.toString(), listOf("11", "13", "15", "17")) { v -> onUpdate { it.copy(terminalFontSize = v.toInt()) } }
-                ChoiceRow("Scrollback lines", settings.terminalScrollback.toString(), listOf("1000", "5000", "10000", "20000")) { v -> onUpdate { it.copy(terminalScrollback = v.toInt()) } }
+                ChoiceRow("Scrollback lines", settings.terminalScrollback.toString(), listOf("1000", "5000", "10000", "20000")) { v -> onUpdate { it.copy(terminalScrollback = v.removeSuffix("s").toInt()) } }
                 ToggleRow("Confirm terminal close", settings.confirmTerminalClose) { v -> onUpdate { it.copy(confirmTerminalClose = v) } }
             }
             SettingsSection("GitHub Actions / CI") {
@@ -124,7 +132,7 @@ fun SettingsScreen(settings: NexusSettings, onUpdate: ((NexusSettings) -> NexusS
                 ToggleRow("Remember cursor position", settings.rememberCursorPosition) { v -> onUpdate { it.copy(rememberCursorPosition = v) } }
                 ToggleRow("Remember Explorer state", settings.rememberExplorerState) { v -> onUpdate { it.copy(rememberExplorerState = v) } }
             }
-            SettingsSection("Security") {
+            SettingsSection("Security", Icons.Outlined.Security) {
                 ToggleRow("App lock", settings.appLock) { v -> onUpdate { it.copy(appLock = v) } }
             }
             AdvancedSettingsSection()
@@ -135,7 +143,11 @@ fun SettingsScreen(settings: NexusSettings, onUpdate: ((NexusSettings) -> NexusS
 
 @Composable
 fun SettingsSection(title: String, icon: ImageVector? = null, content: @Composable () -> Unit) {
-    Card(Modifier.fillMaxWidth(), shape = MaterialTheme.shapes.large) {
+    Card(
+        Modifier.fillMaxWidth(),
+        shape = MaterialTheme.shapes.extraLarge,
+        colors = androidx.compose.material3.CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)
+    ) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) { if (icon != null) Icon(icon, null); Text(title, style = MaterialTheme.typography.titleLarge) }
             Spacer(Modifier.padding(2.dp))
