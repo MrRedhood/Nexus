@@ -47,9 +47,11 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.mrredhood.nexus.core.ai.ChatContext
 import com.mrredhood.nexus.core.ai.ChatContextStore
+import com.mrredhood.nexus.core.ai.NexusActionExecutionRegistry
 import com.mrredhood.nexus.core.ai.NexusActionPolicy
 import com.mrredhood.nexus.core.ai.NexusActionStatus
 import com.mrredhood.nexus.core.ai.NexusDiffKind
+import com.mrredhood.nexus.core.ai.NexusEditorActionBus
 import com.mrredhood.nexus.core.ai.WorkspaceContextService
 import com.mrredhood.nexus.core.model.NexusProject
 import com.mrredhood.nexus.core.workspace.Workspace
@@ -57,6 +59,7 @@ import com.mrredhood.nexus.core.workspace.WorkspaceFileSystem
 
 private val NEXUS_COMMANDS = listOf("/explain", "/fix", "/refactor", "/optimize", "/test", "/build", "/search", "/open")
 private val MODEL_FILTERS = listOf("All", "Free", "Premium", "Image", "Video", "Audio")
+private val MUTATING_ACTION_TYPES = setOf("create_file", "create_directory", "patch_file", "replace_file", "delete_file", "rename_file", "copy_file", "move_file")
 
 @Composable
 fun ChatScreen(project: NexusProject, workspace: Workspace, context: ChatContext = ChatContext(), onClose: (() -> Unit)? = null) {
@@ -69,6 +72,7 @@ fun ChatScreen(project: NexusProject, workspace: Workspace, context: ChatContext
     val contextSnapshot by vm.contextSnapshot.collectAsStateWithLifecycle()
     val proposals by vm.actionProposals.collectAsStateWithLifecycle()
     val reviews by vm.actionReviews.collectAsStateWithLifecycle()
+    val executions by NexusActionExecutionRegistry.executions.collectAsStateWithLifecycle()
     val actionMessage by vm.actionMessage.collectAsStateWithLifecycle()
     val liveContexts by ChatContextStore.contexts.collectAsStateWithLifecycle()
     val featureSettings by settingsVm.settings.collectAsStateWithLifecycle()
@@ -89,6 +93,7 @@ fun ChatScreen(project: NexusProject, workspace: Workspace, context: ChatContext
 
     LaunchedEffect(workspace.id, featureSettings.provider) {
         vm.open(workspace)
+        NexusActionExecutionRegistry.clear()
         runCatching { contextService.refresh(workspace) }
         settingsVm.loadModels(featureSettings.provider)
     }
@@ -111,6 +116,13 @@ fun ChatScreen(project: NexusProject, workspace: Workspace, context: ChatContext
             else -> true
         }
     }
+
+    val successfulChanges = executions.values.filter { it.success && it.actionType in MUTATING_ACTION_TYPES }
+    val createdCount = successfulChanges.count { it.actionType == "create_file" || it.actionType == "create_directory" }
+    val modifiedCount = successfulChanges.count { it.actionType == "patch_file" || it.actionType == "replace_file" }
+    val deletedCount = successfulChanges.count { it.actionType == "delete_file" }
+    val addedLines = successfulChanges.sumOf { it.additions }
+    val removedLines = successfulChanges.sumOf { it.deletions }
 
     fun copyMessage(index: Int, content: String) {
         if (content.isBlank()) return
@@ -155,12 +167,7 @@ fun ChatScreen(project: NexusProject, workspace: Workspace, context: ChatContext
             }
         }
 
-        ChatContextAttachmentPanel(
-            workspace = workspace,
-            fileSystem = fileSystem,
-            context = chatContext,
-            onContextChanged = { chatContext = it }
-        )
+        ChatContextAttachmentPanel(workspace = workspace, fileSystem = fileSystem, context = chatContext, onContextChanged = { chatContext = it })
 
         LazyColumn(state = listState, modifier = Modifier.weight(1f).fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             itemsIndexed(messages) { index, message ->
@@ -185,31 +192,52 @@ fun ChatScreen(project: NexusProject, workspace: Workspace, context: ChatContext
             }
             if (proposals.isNotEmpty()) item {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("Nexus actions", style = MaterialTheme.typography.titleMedium)
+                    Text("Workspace changes", style = MaterialTheme.typography.titleMedium)
+                    if (successfulChanges.isNotEmpty()) {
+                        Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHighest)) {
+                            Row(Modifier.fillMaxWidth().padding(12.dp), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                                Text("Created $createdCount")
+                                Text("Modified $modifiedCount")
+                                Text("Deleted $deletedCount")
+                                Text("+$addedLines")
+                                Text("-$removedLines")
+                            }
+                        }
+                    }
                     proposals.forEach { proposal ->
                         val action = proposal.action
                         val review = reviews[proposal.id]
+                        val execution = executions[proposal.id]
+                        val isMutating = action.type in MUTATING_ACTION_TYPES
                         var expanded by remember(proposal.id, review?.proposed) { mutableStateOf(false) }
                         Card(Modifier.fillMaxWidth()) {
                             Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                 Text(action.type.replace('_', ' ').replaceFirstChar { it.uppercase() }, style = MaterialTheme.typography.titleSmall)
                                 action.path?.let { Text(it, style = MaterialTheme.typography.bodyMedium) }
-                                if (review != null) {
-                                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) { Text("+${review.additions}", style = MaterialTheme.typography.labelMedium); Text("-${review.deletions}", style = MaterialTheme.typography.labelMedium); Text(if (review.changed) "Changes ready" else "No changes", style = MaterialTheme.typography.labelMedium) }
-                                    OutlinedButton(onClick = { expanded = !expanded }, enabled = review.changed) { Text(if (expanded) "Hide diff" else "Review diff") }
-                                    if (expanded) Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHighest)) { Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) { review.diff.forEach { line -> val prefix = when (line.kind) { NexusDiffKind.ADD -> "+"; NexusDiffKind.REMOVE -> "-"; NexusDiffKind.CONTEXT -> " " }; Text("$prefix${line.text}", style = MaterialTheme.typography.bodySmall) } } }
-                                } else if (NexusActionPolicy.requiresApproval(action)) Text("Preparing a safe change preview…", style = MaterialTheme.typography.bodySmall)
-                                when (proposal.status) {
-                                    NexusActionStatus.PROPOSED, NexusActionStatus.APPROVED -> Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                        if (action.type == "open_file" || action.type == "focus_file") OutlinedButton(onClick = { vm.openAction(proposal.id) }) { Icon(Icons.Outlined.OpenInNew, null); Text("Open") }
-                                        if (NexusActionPolicy.requiresApproval(action)) Button(onClick = { vm.approveAction(proposal.id) }, enabled = review?.changed != false) { Text("Apply") }
-                                        else if (action.type != "open_file" && action.type != "focus_file") Button(onClick = { vm.approveAction(proposal.id) }) { Text("Approve") }
-                                        OutlinedButton(onClick = { vm.rejectAction(proposal.id) }) { Text("Reject") }
+                                execution?.let {
+                                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                                        Text(if (it.success) "Applied" else "Failed", style = MaterialTheme.typography.labelMedium, color = if (it.success) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error)
+                                        if (it.additions > 0 || it.deletions > 0) Text("+${it.additions} / -${it.deletions} lines", style = MaterialTheme.typography.labelMedium)
                                     }
-                                    NexusActionStatus.EXECUTING -> Text("Applying…")
-                                    NexusActionStatus.COMPLETED -> Text("Applied", color = MaterialTheme.colorScheme.primary)
-                                    NexusActionStatus.REJECTED -> Text("Rejected")
-                                    NexusActionStatus.FAILED -> Text("Failed", color = MaterialTheme.colorScheme.error)
+                                    Text(it.message, style = MaterialTheme.typography.bodySmall)
+                                }
+                                review?.let {
+                                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) { Text("+${it.additions}", style = MaterialTheme.typography.labelMedium); Text("-${it.deletions}", style = MaterialTheme.typography.labelMedium) }
+                                    OutlinedButton(onClick = { expanded = !expanded }, enabled = it.changed) { Text(if (expanded) "Hide diff" else "Review diff") }
+                                    if (expanded) Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHighest)) { Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) { it.diff.forEach { line -> val prefix = when (line.kind) { NexusDiffKind.ADD -> "+"; NexusDiffKind.REMOVE -> "-"; NexusDiffKind.CONTEXT -> " " }; Text("$prefix${line.text}", style = MaterialTheme.typography.bodySmall) } } }
+                                }
+                                if (action.path != null && action.type != "delete_file" && (execution?.success == true || action.type == "open_file" || action.type == "focus_file")) {
+                                    OutlinedButton(onClick = { NexusEditorActionBus.request(workspace.id, action.path, true) }) { Icon(Icons.Outlined.OpenInNew, null); Text("Open in editor") }
+                                }
+                                if (execution == null && !isMutating && (action.type == "open_file" || action.type == "focus_file")) {
+                                    OutlinedButton(onClick = { vm.openAction(proposal.id) }) { Icon(Icons.Outlined.OpenInNew, null); Text("Open") }
+                                }
+                                when {
+                                    execution?.success == true -> Text("Completed", color = MaterialTheme.colorScheme.primary)
+                                    execution != null && !execution.success -> Text("Failed", color = MaterialTheme.colorScheme.error)
+                                    proposal.status == NexusActionStatus.EXECUTING -> Text("Applying…")
+                                    isMutating -> Text("Nexus applied this change automatically.", style = MaterialTheme.typography.bodySmall)
+                                    proposal.status == NexusActionStatus.REJECTED -> Text("Rejected")
                                 }
                             }
                         }
@@ -224,7 +252,7 @@ fun ChatScreen(project: NexusProject, workspace: Workspace, context: ChatContext
 
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             OutlinedTextField(value = input, onValueChange = { input = it }, modifier = Modifier.weight(1f).heightIn(min = 52.dp, max = 150.dp), placeholder = { Text("Ask Nexus about your code…  @file  /command") }, maxLines = 6, enabled = !generating)
-            IconButton(onClick = { if (generating) vm.stop() else { vm.send(input, chatContext); input = "" } }) { Icon(if (generating) Icons.Outlined.Stop else Icons.Outlined.Send, if (generating) "Stop" else "Send") }
+            IconButton(onClick = { if (generating) vm.stop() else { vm.send(input, chatContext); input = "" } }) { Icon(if (generating) Icons.Outlined.Stop else Icons.Outlined.Send, if (generating) "Pause" else "Send") }
         }
     }
 }
