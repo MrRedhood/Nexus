@@ -13,11 +13,7 @@ import kotlin.coroutines.coroutineContext
 data class WorkspaceChange(val relativePath: String, val status: WorkspaceChangeStatus, val additions: Int, val deletions: Int)
 enum class WorkspaceChangeStatus { CREATED, MODIFIED, DELETED }
 
-data class WorkspaceChangeSummary(
-    val changes: List<WorkspaceChange> = emptyList(),
-    val additions: Int = changes.sumOf { it.additions },
-    val deletions: Int = changes.sumOf { it.deletions }
-) {
+data class WorkspaceChangeSummary(val changes: List<WorkspaceChange> = emptyList(), val additions: Int = changes.sumOf { it.additions }, val deletions: Int = changes.sumOf { it.deletions }) {
     val created: Int get() = changes.count { it.status == WorkspaceChangeStatus.CREATED }
     val modified: Int get() = changes.count { it.status == WorkspaceChangeStatus.MODIFIED }
     val deleted: Int get() = changes.count { it.status == WorkspaceChangeStatus.DELETED }
@@ -25,18 +21,21 @@ data class WorkspaceChangeSummary(
 
 class WorkspaceChangeTracker(private val fileSystem: WorkspaceFileSystem) {
     private var workspaceId: String? = null
+    private var initialized = false
     private var baseline: Map<String, String> = emptyMap()
 
     suspend fun start(workspace: Workspace) = withContext(Dispatchers.IO) {
-        if (workspaceId == workspace.id && baseline.isNotEmpty()) return@withContext
+        if (workspaceId == workspace.id && initialized) return@withContext
         baseline = snapshot(workspace)
         workspaceId = workspace.id
+        initialized = true
     }
 
     suspend fun refresh(workspace: Workspace): WorkspaceChangeSummary = withContext(Dispatchers.IO) {
-        if (workspaceId != workspace.id || baseline.isEmpty()) {
+        if (workspaceId != workspace.id || !initialized) {
             baseline = snapshot(workspace)
             workspaceId = workspace.id
+            initialized = true
             return@withContext WorkspaceChangeSummary()
         }
         buildSummary(baseline, snapshot(workspace))
@@ -45,6 +44,7 @@ class WorkspaceChangeTracker(private val fileSystem: WorkspaceFileSystem) {
     suspend fun reset(workspace: Workspace): WorkspaceChangeSummary = withContext(Dispatchers.IO) {
         baseline = snapshot(workspace)
         workspaceId = workspace.id
+        initialized = true
         WorkspaceChangeSummary()
     }
 
@@ -57,9 +57,7 @@ class WorkspaceChangeTracker(private val fileSystem: WorkspaceFileSystem) {
                 if (entry.type == EntryType.DIRECTORY) {
                     if (entry.name !in EXCLUDED_DIRECTORIES) walk(entry.relativePath)
                 } else if (entry.sizeBytes in 0..MAX_FILE_BYTES && isTextLike(entry.name, entry.mimeType)) {
-                    runCatching { fileSystem.read(workspace, entry.relativePath) }.onSuccess { file ->
-                        if (!file.content.take(4096).contains('\u0000')) files[file.relativePath] = normalize(file.content)
-                    }
+                    runCatching { fileSystem.read(workspace, entry.relativePath) }.onSuccess { file -> if (!file.content.take(4096).contains('\u0000')) files[file.relativePath] = normalize(file.content) }
                 }
             }
         }
@@ -89,32 +87,20 @@ class WorkspaceChangeTracker(private val fileSystem: WorkspaceFileSystem) {
     private fun String.lineCount(): Int = if (isEmpty()) 0 else count { it == '\n' } + if (last() == '\n') 0 else 1
 
     private fun lineDiffCounts(a: List<String>, b: List<String>): Pair<Int, Int> {
-        val n = a.size
-        val m = b.size
+        val n = a.size; val m = b.size
         if (n == 0) return m to 0
         if (m == 0) return 0 to n
-        val max = n + m
-        val offset = max
-        var v = IntArray(2 * max + 1)
-        v[offset + 1] = 0
+        val max = n + m; val offset = max
+        var v = IntArray(2 * max + 1); v[offset + 1] = 0
         val trace = ArrayList<IntArray>()
         for (d in 0..max) {
             for (k in -d..d step 2) {
                 val index = offset + k
-                val xStart = when {
-                    k == -d -> v[index + 1]
-                    k == d -> v[index - 1] + 1
-                    v[index - 1] < v[index + 1] -> v[index + 1]
-                    else -> v[index - 1] + 1
-                }
-                var x = xStart
-                var y = x - k
+                val xStart = when { k == -d -> v[index + 1]; k == d -> v[index - 1] + 1; v[index - 1] < v[index + 1] -> v[index + 1]; else -> v[index - 1] + 1 }
+                var x = xStart; var y = x - k
                 while (x < n && y < m && a[x] == b[y]) { x++; y++ }
                 v[index] = x
-                if (x >= n && y >= m) {
-                    trace += v.copyOf()
-                    return backtrackCounts(trace, n, m, offset)
-                }
+                if (x >= n && y >= m) { trace += v.copyOf(); return backtrackCounts(trace, n, m, offset) }
             }
             trace += v.copyOf()
         }
@@ -122,21 +108,11 @@ class WorkspaceChangeTracker(private val fileSystem: WorkspaceFileSystem) {
     }
 
     private fun backtrackCounts(trace: List<IntArray>, n: Int, m: Int, offset: Int): Pair<Int, Int> {
-        var x = n
-        var y = m
-        var additions = 0
-        var deletions = 0
+        var x = n; var y = m; var additions = 0; var deletions = 0
         for (d in trace.lastIndex downTo 1) {
-            val v = trace[d - 1]
-            val k = x - y
-            val prevK = when {
-                k == -d -> k + 1
-                k == d -> k - 1
-                v[offset + k - 1] < v[offset + k + 1] -> k + 1
-                else -> k - 1
-            }
-            val prevX = v[offset + prevK]
-            val prevY = prevX - prevK
+            val v = trace[d - 1]; val k = x - y
+            val prevK = when { k == -d -> k + 1; k == d -> k - 1; v[offset + k - 1] < v[offset + k + 1] -> k + 1; else -> k - 1 }
+            val prevX = v[offset + prevK]; val prevY = prevX - prevK
             while (x > prevX && y > prevY) { x--; y-- }
             if (x == prevX) { additions++; y-- } else { deletions++; x-- }
         }
@@ -146,10 +122,7 @@ class WorkspaceChangeTracker(private val fileSystem: WorkspaceFileSystem) {
     private fun isTextLike(name: String, mimeType: String?): Boolean {
         if (mimeType?.startsWith("text/") == true) return true
         return when (name.substringAfterLast('.', "").lowercase(Locale.ROOT)) {
-            "kt", "kts", "java", "groovy", "gradle", "xml", "json", "js", "mjs", "cjs", "ts", "tsx", "jsx",
-            "html", "htm", "css", "scss", "sass", "less", "md", "markdown", "txt", "properties", "yaml", "yml",
-            "toml", "sh", "bash", "zsh", "bat", "cmd", "sql", "c", "h", "cpp", "hpp", "cc", "rs", "go", "py",
-            "rb", "php", "swift", "dart", "ini", "cfg", "conf" -> true
+            "kt", "kts", "java", "groovy", "gradle", "xml", "json", "js", "mjs", "cjs", "ts", "tsx", "jsx", "html", "htm", "css", "scss", "sass", "less", "md", "markdown", "txt", "properties", "yaml", "yml", "toml", "sh", "bash", "zsh", "bat", "cmd", "sql", "c", "h", "cpp", "hpp", "cc", "rs", "go", "py", "rb", "php", "swift", "dart", "ini", "cfg", "conf" -> true
             else -> false
         }
     }
