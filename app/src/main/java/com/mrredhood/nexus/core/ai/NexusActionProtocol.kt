@@ -104,8 +104,8 @@ object NexusActionPolicy {
         if (!isMutating(action)) return true
         return when (permissionMode.lowercase()) {
             "never", "restricted" -> false
-            "some", "standard" -> action.type !in destructiveTypes
-            "autonomous", "full" -> true
+            "some" -> action.type !in destructiveTypes
+            "standard", "autonomous", "full" -> true
             else -> true
         }
     }
