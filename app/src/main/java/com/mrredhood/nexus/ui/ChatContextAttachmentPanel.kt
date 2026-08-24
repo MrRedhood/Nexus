@@ -21,6 +21,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
@@ -30,6 +31,7 @@ import com.mrredhood.nexus.core.workspace.EntryType
 import com.mrredhood.nexus.core.workspace.Workspace
 import com.mrredhood.nexus.core.workspace.WorkspaceEntry
 import com.mrredhood.nexus.core.workspace.WorkspaceFileSystem
+import kotlinx.coroutines.launch
 
 @Composable
 fun ChatContextAttachmentPanel(
@@ -107,6 +109,7 @@ private fun WorkspaceFilePicker(
     var entries by remember { mutableStateOf<List<WorkspaceEntry>>(emptyList()) }
     var loading by remember { mutableStateOf(true) }
     var error by remember { mutableStateOf<String?>(null) }
+    val scope = rememberCoroutineScope()
 
     LaunchedEffect(workspace.id, directory) {
         loading = true
@@ -123,36 +126,40 @@ private fun WorkspaceFilePicker(
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(if (directory.isBlank()) "/" else "/$directory", style = MaterialTheme.typography.labelMedium)
-                if (directory.isNotBlank()) {
-                    OutlinedButton(onClick = { directory = directory.substringBeforeLast('/', "") }) { Text("Up") }
-                }
+                if (directory.isNotBlank()) OutlinedButton(onClick = { directory = directory.substringBeforeLast('/', "") }) { Text("Up") }
                 if (loading) Text("Loading workspace…")
                 error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
                 LazyColumn(Modifier.heightIn(max = 420.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     items(entries) { entry ->
                         if (entry.type == EntryType.DIRECTORY) {
-                            OutlinedButton(onClick = { directory = entry.relativePath }, modifier = Modifier.fillMaxWidth()) { Text("📁 ${entry.name}") }
+                            OutlinedButton(onClick = { directory = entry.relativePath }, modifier = Modifier.fillMaxWidth(), enabled = !loading) { Text("Folder: ${entry.name}") }
                         } else {
                             val attached = entry.relativePath in selectedPaths
                             OutlinedButton(
                                 onClick = {
-                                    if (!attached) {
-                                        // The picker callback performs the read asynchronously in the parent scope.
-                                        // This screen only navigates; attachment loading is handled below.
+                                    if (!attached && !loading) {
+                                        loading = true
+                                        scope.launch {
+                                            runCatching { fileSystem.read(workspace, entry.relativePath) }
+                                                .onSuccess { file -> onAttach(ChatAttachment(file.relativePath, file.content, file.sizeBytes)) }
+                                                .onFailure { error = it.message ?: "Unable to read file." }
+                                            loading = false
+                                        }
                                     }
                                 },
-                                modifier = Modifier.fillMaxWidth()
+                                modifier = Modifier.fillMaxWidth(),
+                                enabled = !loading
                             ) {
                                 Column(Modifier.weight(1f)) {
                                     Text(entry.name)
                                     Text("${entry.sizeBytes} bytes", style = MaterialTheme.typography.labelSmall)
                                 }
-                                Text(if (attached) "Attached" else "Select")
+                                Text(if (attached) "Attached" else "Attach")
                             }
                         }
                     }
                 }
-                Text("Tap a file to attach it. Large files are rejected by the workspace file limits.", style = MaterialTheme.typography.labelSmall)
+                Text("Attachments are read through the workspace filesystem and remain subject to Nexus file/context limits.", style = MaterialTheme.typography.labelSmall)
             }
         },
         confirmButton = { TextButton(onClick = onDismiss) { Text("Done") } }
