@@ -15,6 +15,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.CloudDownload
 import androidx.compose.material.icons.outlined.CloudUpload
+import androidx.compose.material.icons.outlined.Download
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.Source
 import androidx.compose.material3.AlertDialog
@@ -63,6 +64,7 @@ fun GitScreen(project: NexusProject, workspace: Workspace, onBack: () -> Unit) {
     var error by remember { mutableStateOf<String?>(null) }
     var info by remember { mutableStateOf<String?>(null) }
     var showCommit by remember { mutableStateOf(false) }
+    var showArtifacts by remember { mutableStateOf(false) }
 
     fun refreshStatus() {
         val token = tokenStore.get("github")
@@ -104,11 +106,19 @@ fun GitScreen(project: NexusProject, workspace: Workspace, onBack: () -> Unit) {
     LaunchedEffect(repository, branch) { if (repository.isNotBlank()) refreshStatus() }
     BackHandler(onBack = onBack)
 
+    if (showArtifacts) {
+        ArtifactCenterScreen(project, workspace) { showArtifacts = false }
+        return
+    }
+
     Scaffold(topBar = {
         TopAppBar(
             title = { Text("Source Control") },
             navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.Outlined.ArrowBack, "Back") } },
-            actions = { IconButton(enabled = !loading, onClick = ::refreshStatus) { Icon(Icons.Outlined.Refresh, "Refresh") } }
+            actions = {
+                IconButton(onClick = { showArtifacts = true }) { Icon(Icons.Outlined.Download, "Build artifacts") }
+                IconButton(enabled = !loading, onClick = ::refreshStatus) { Icon(Icons.Outlined.Refresh, "Refresh") }
+            }
         )
     }) { padding ->
         Column(Modifier.fillMaxSize().padding(padding).padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -129,8 +139,7 @@ fun GitScreen(project: NexusProject, workspace: Workspace, onBack: () -> Unit) {
                         Text("${s.changed.size} modified · ${s.added.size} added · ${s.deleted.size} deleted · ${s.unchanged} unchanged")
                     }
                 }
-                val changes = (s.changed + s.added).distinct().sorted()
-                if (s.deleted.isNotEmpty()) changes.plus(s.deleted).distinct().sorted()
+                val changes = (s.changed + s.added + s.deleted).distinct().sorted()
                 LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     items(changes) { path -> Text(path, modifier = Modifier.padding(vertical = 4.dp)) }
                 }
