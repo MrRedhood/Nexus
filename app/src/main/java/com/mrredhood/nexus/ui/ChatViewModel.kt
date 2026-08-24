@@ -105,12 +105,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         ))
     }
 
-    private fun contextItem(source: AIContextSource, label: String, content: String): AIContextItem = AIContextItem(
-        source = source,
-        label = label,
-        content = content,
-        estimatedTokens = AIContextService.estimateTokens(content)
-    )
+    private fun contextItem(source: AIContextSource, label: String, content: String): AIContextItem = AIContextItem(source = source, label = label, content = content, estimatedTokens = AIContextService.estimateTokens(content))
 
     private fun previewMutatingActions(proposals: List<NexusActionProposal>, targetWorkspace: Workspace) {
         viewModelScope.launch {
@@ -120,6 +115,35 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             }
             _actionReviews.value = reviews
         }
+    }
+
+    /** Replaces a user message and all responses after it, then sends the edited prompt. */
+    fun editAndResend(index: Int, editedText: String, context: ChatContext = ChatContext()) {
+        val id = workspaceId ?: return
+        if (_generating.value) return
+        val text = editedText.trim()
+        if (text.isEmpty()) return
+        val target = _messages.value.getOrNull(index) ?: return
+        if (target.role != "user") return
+        _messages.value = _messages.value.take(index)
+        repository.save(id, _messages.value)
+        send(text, context)
+    }
+
+    /** Removes the selected assistant response and regenerates it from the preceding user message. */
+    fun regenerate(index: Int, context: ChatContext = ChatContext()) {
+        val id = workspaceId ?: return
+        if (_generating.value) return
+        val current = _messages.value
+        val target = current.getOrNull(index) ?: return
+        if (target.role != "assistant") return
+        val userIndex = current.subList(0, index).indexOfLast { it.role == "user" }
+        if (userIndex < 0) return
+        val prompt = current[userIndex].content.trim()
+        if (prompt.isEmpty()) return
+        _messages.value = current.take(userIndex)
+        repository.save(id, _messages.value)
+        send(prompt, context)
     }
 
     fun send(text: String, context: ChatContext = ChatContext()) {
