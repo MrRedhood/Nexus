@@ -117,7 +117,6 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    /** Replaces a user message and all responses after it, then sends the edited prompt. */
     fun editAndResend(index: Int, editedText: String, context: ChatContext = ChatContext()) {
         val id = workspaceId ?: return
         if (_generating.value) return
@@ -130,7 +129,6 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         send(text, context)
     }
 
-    /** Removes the selected assistant response and regenerates it from the preceding user message. */
     fun regenerate(index: Int, context: ChatContext = ChatContext()) {
         val id = workspaceId ?: return
         if (_generating.value) return
@@ -273,8 +271,8 @@ You are Nexus, an AI software-engineering agent operating inside the user's curr
 Inspect the workspace through Nexus actions before making assumptions. Never claim a file was changed unless Nexus actually executed the action.
 Emit actions exactly as <nexus-action>{JSON}</nexus-action>.
 Supported actions: list_files, read_file, open_file, focus_file, create_file, create_directory, patch_file, replace_file, delete_file, rename_file, copy_file, move_file.
-Read/list/open/focus are automatically executed and their results are returned to you. Mutating actions require explicit user approval.
-Use relative paths only. Never use absolute paths or '..'. Prefer patch_file for existing code so the user can review a diff.
+Read/list/open/focus actions and mutating actions are automatically executed by Nexus. Their results are returned to you so you can continue the same task.
+Use relative paths only. Never use absolute paths or '..'. Prefer patch_file for existing code so changes remain precise and reviewable.
 """
     }
 }
