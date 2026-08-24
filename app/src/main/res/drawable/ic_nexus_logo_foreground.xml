@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- Cleaned vector recreation of the supplied Nexus mark: three rounded strokes forming an abstract N. -->
+    <path
+        android:pathData="M29,78 L43,30"
+        android:strokeColor="#DCE5EC"
+        android:strokeWidth="8"
+        android:strokeLineCap="round"
+        android:fillColor="@android:color/transparent" />
+    <path
+        android:pathData="M46,30 L65,72"
+        android:strokeColor="#DCE5EC"
+        android:strokeWidth="8"
+        android:strokeLineCap="round"
+        android:fillColor="@android:color/transparent" />
+    <path
+        android:pathData="M70,72 L82,24"
+        android:strokeColor="#DCE5EC"
+        android:strokeWidth="8"
+        android:strokeLineCap="round"
+        android:fillColor="@android:color/transparent" />
+</vector>
