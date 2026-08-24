@@ -1,7 +1,6 @@
 package com.mrredhood.nexus.core.ai
 
 import android.content.Context
-import com.mrredhood.nexus.core.settings.NexusSettingsRuntime
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -25,19 +24,30 @@ class ChatRepository(context: Context) {
 
 data class ChatMessage(val role: String, val content: String, val timestamp: Long = System.currentTimeMillis())
 
+data class ChatAttachment(
+    val path: String,
+    val content: String,
+    val sizeBytes: Long = content.toByteArray(Charsets.UTF_8).size.toLong()
+)
+
 data class ChatContext(
     val currentFile: String? = null,
     val selection: String? = null,
     val gitDiff: String? = null,
     val terminalOutput: String? = null,
-    val workspaceSummary: String? = null
+    val workspaceSummary: String? = null,
+    val includeCurrentFile: Boolean = true,
+    val includeSelection: Boolean = true,
+    val includeGitDiff: Boolean = true,
+    val includeTerminalOutput: Boolean = true,
+    val includeWorkspaceSummary: Boolean = true,
+    val attachedFiles: List<ChatAttachment> = emptyList()
 )
 
 class ChatContextBuilder {
     fun build(context: ChatContext): String = build(context, null)
 
     fun build(context: ChatContext, snapshot: AIContextSnapshot?): String {
-        val settings = NexusSettingsRuntime.current()
         return buildString {
             append("You are Nexus, an Android-native AI engineering assistant. Be precise, inspect context before proposing changes, and never claim an action was performed unless it actually was.\n\n")
             append("When a software-engineering action is required, emit a structured action block using exactly <nexus-action>{JSON}</nexus-action>. Supported actions: list_files, read_file, open_file, focus_file, create_file, create_directory, patch_file, replace_file, delete_file, rename_file, copy_file, move_file. Read-only actions may be executed automatically by Nexus; mutating actions require explicit user approval. Do not use action blocks for ordinary explanations.\n\n")
@@ -46,11 +56,12 @@ class ChatContextBuilder {
                 append(snapshot.asPromptContext())
                 append("\n")
             } else {
-                if (settings.includeCurrentFile && !context.currentFile.isNullOrBlank()) append("CURRENT FILE:\n${context.currentFile}\n\n")
-                if (settings.includeSelection && !context.selection.isNullOrBlank()) append("SELECTED CODE:\n${context.selection}\n\n")
-                if (settings.includeGitDiff && !context.gitDiff.isNullOrBlank()) append("GIT DIFF:\n${context.gitDiff}\n\n")
-                if (settings.includeTerminalContext && !context.terminalOutput.isNullOrBlank()) append("TERMINAL OUTPUT:\n${context.terminalOutput}\n\n")
-                if (settings.includeWorkspaceSummary && !context.workspaceSummary.isNullOrBlank()) append("WORKSPACE SUMMARY:\n${context.workspaceSummary}\n\n")
+                if (context.includeCurrentFile && !context.currentFile.isNullOrBlank()) append("CURRENT FILE:\n${context.currentFile}\n\n")
+                if (context.includeSelection && !context.selection.isNullOrBlank()) append("SELECTED CODE:\n${context.selection}\n\n")
+                if (context.includeGitDiff && !context.gitDiff.isNullOrBlank()) append("GIT DIFF:\n${context.gitDiff}\n\n")
+                if (context.includeTerminalOutput && !context.terminalOutput.isNullOrBlank()) append("TERMINAL OUTPUT:\n${context.terminalOutput}\n\n")
+                if (context.includeWorkspaceSummary && !context.workspaceSummary.isNullOrBlank()) append("WORKSPACE SUMMARY:\n${context.workspaceSummary}\n\n")
+                context.attachedFiles.forEach { attachment -> append("ATTACHED FILE: ${attachment.path}\n${attachment.content}\n\n") }
             }
         }
     }
