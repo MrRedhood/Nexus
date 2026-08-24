@@ -1,5 +1,8 @@
 package com.mrredhood.nexus.ui
 
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -11,6 +14,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.DeleteSweep
 import androidx.compose.material.icons.outlined.OpenInNew
 import androidx.compose.material.icons.outlined.Send
@@ -75,6 +79,7 @@ fun ChatScreen(project: NexusProject, workspace: Workspace, context: ChatContext
     var showContextInspector by remember { mutableStateOf(false) }
     var showModelMenu by remember { mutableStateOf(false) }
     var modelFilter by remember { mutableStateOf("All") }
+    var copiedMessageIndex by remember { mutableStateOf<Int?>(null) }
     val listState = rememberLazyListState()
     val workspaceContext = liveContexts[workspace.id] ?: context
 
@@ -100,6 +105,13 @@ fun ChatScreen(project: NexusProject, workspace: Workspace, context: ChatContext
             "Audio" -> model.audio
             else -> true
         }
+    }
+
+    fun copyMessage(index: Int, content: String) {
+        if (content.isBlank()) return
+        val clipboard = androidContext.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+        clipboard.setPrimaryClip(ClipData.newPlainText("Nexus message", content))
+        copiedMessageIndex = index
     }
 
     Column(Modifier.fillMaxSize().padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -146,11 +158,20 @@ fun ChatScreen(project: NexusProject, workspace: Workspace, context: ChatContext
 
         LazyColumn(state = listState, modifier = Modifier.weight(1f).fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             items(messages) { message ->
+                val index = messages.indexOf(message)
                 val assistant = message.role == "assistant"
                 Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = if (assistant) MaterialTheme.colorScheme.surfaceContainerHighest else MaterialTheme.colorScheme.primaryContainer)) {
                     Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Text(if (assistant) "Nexus" else "You", style = MaterialTheme.typography.labelMedium)
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                            Text(if (assistant) "Nexus" else "You", style = MaterialTheme.typography.labelMedium)
+                            if (message.content.isNotBlank()) {
+                                IconButton(onClick = { copyMessage(index, message.content) }) {
+                                    Icon(Icons.Outlined.ContentCopy, if (copiedMessageIndex == index) "Copied" else "Copy")
+                                }
+                            }
+                        }
                         Text(message.content.ifBlank { "Thinking…" })
+                        if (copiedMessageIndex == index) Text("Copied to clipboard", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
                     }
                 }
             }
