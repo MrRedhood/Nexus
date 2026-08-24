@@ -4,6 +4,8 @@ import android.content.Context
 import com.mrredhood.nexus.core.settings.AdvancedSettingsRepository
 import com.mrredhood.nexus.core.settings.ApiKeyStore
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
@@ -17,33 +19,18 @@ class AiProviderService(context: Context) {
     private val settings = AdvancedSettingsRepository(context.applicationContext)
     private val keys = ApiKeyStore(context.applicationContext)
 
-    suspend fun complete(request: AiRequest): ProviderResult = withContext(Dispatchers.IO) {
-        execute(request, false) { }
-    }
+    suspend fun complete(request: AiRequest): ProviderResult = withContext(Dispatchers.IO) { execute(request, false) { } }
+    suspend fun stream(request: AiRequest, onDelta: suspend (String) -> Unit): ProviderResult = withContext(Dispatchers.IO) { execute(request, true, onDelta) }
 
-    suspend fun stream(request: AiRequest, onDelta: suspend (String) -> Unit): ProviderResult = withContext(Dispatchers.IO) {
-        execute(request, true, onDelta)
-    }
-
-    /** Performs a minimal authenticated request using the currently configured provider. */
     suspend fun testConnection(): ConnectionTestResult = withContext(Dispatchers.IO) {
         val config = settings.settings.first()
         val provider = config.provider.trim()
-        val key = keys.get(provider)
-            ?: return@withContext ConnectionTestResult(false, "No API key configured for $provider.")
+        val key = keys.get(provider) ?: return@withContext ConnectionTestResult(false, "No API key configured for $provider.")
         val model = resolveModel(provider, "", config.model)
         if (model.isBlank()) return@withContext ConnectionTestResult(false, "No model configured for $provider.")
-
         runCatching {
-            val request = AiRequest(
-                messages = listOf(AiMessage("user", "Reply with OK.")),
-                model = model,
-                temperature = 0.0,
-                maxOutputTokens = 8
-            )
-            val result = execute(request, false) { }
-            if (result.success) ConnectionTestResult(true, "Connection successful with $provider / $model.")
-            else ConnectionTestResult(false, result.message.ifBlank { "Connection failed." })
+            val result = execute(AiRequest(listOf(AiMessage("user", "Reply with OK.")), model = model, temperature = 0.0, maxOutputTokens = 8), false) { }
+            if (result.success) ConnectionTestResult(true, "Connection successful with $provider / $model.") else ConnectionTestResult(false, result.message.ifBlank { "Connection failed." })
         }.getOrElse { ConnectionTestResult(false, it.message ?: "Connection failed.") }
     }
 
@@ -54,8 +41,7 @@ class AiProviderService(context: Context) {
         val model = resolveModel(provider, request.model, config.model)
         if (model.isBlank()) return ProviderResult(false, "No model configured for $provider.")
         return runCatching {
-            if (provider.equals("Gemini", true)) gemini(key, model, request, streaming, onDelta)
-            else openAi(provider, key, model, request, config.endpoint, streaming, onDelta)
+            if (provider.equals("Gemini", true)) gemini(key, model, request, streaming, onDelta) else openAi(provider, key, model, request, config.endpoint, streaming, onDelta)
         }.getOrElse { ProviderResult(false, it.message ?: "AI request failed.") }
     }
 
@@ -67,9 +53,7 @@ class AiProviderService(context: Context) {
             request.messages.firstOrNull { it.role == "system" }?.let { put("systemInstruction", JSONObject().put("parts", JSONArray().put(JSONObject().put("text", it.content)))) }
             put("generationConfig", JSONObject().put("temperature", request.temperature).put("maxOutputTokens", request.maxOutputTokens))
         }
-        return readResponse(url, body.toString(), null, streaming, "Gemini", model, onDelta) { json ->
-            json.optJSONArray("candidates")?.optJSONObject(0)?.optJSONObject("content")?.optJSONArray("parts")?.optJSONObject(0)?.optString("text").orEmpty()
-        }
+        return readResponse(url, body.toString(), null, streaming, "Gemini", model, onDelta) { json -> json.optJSONArray("candidates")?.optJSONObject(0)?.optJSONObject("content")?.optJSONArray("parts")?.optJSONObject(0)?.optString("text").orEmpty() }
     }
 
     private suspend fun openAi(provider: String, key: String, model: String, request: AiRequest, configuredEndpoint: String, streaming: Boolean, onDelta: suspend (String) -> Unit): ProviderResult {
@@ -85,10 +69,7 @@ class AiProviderService(context: Context) {
             put("messages", JSONArray().also { a -> request.messages.forEach { a.put(JSONObject().put("role", it.role).put("content", it.content)) } })
             put("temperature", request.temperature); put("max_tokens", request.maxOutputTokens); put("stream", streaming)
         }
-        return readResponse(endpoint, body.toString(), "Bearer $key", streaming, provider, model, onDelta) { json ->
-            if (streaming) json.optJSONArray("choices")?.optJSONObject(0)?.optJSONObject("delta")?.optString("content").orEmpty()
-            else json.optJSONArray("choices")?.optJSONObject(0)?.optJSONObject("message")?.optString("content").orEmpty()
-        }
+        return readResponse(endpoint, body.toString(), "Bearer $key", streaming, provider, model, onDelta) { json -> if (streaming) json.optJSONArray("choices")?.optJSONObject(0)?.optJSONObject("delta")?.optString("content").orEmpty() else json.optJSONArray("choices")?.optJSONObject(0)?.optJSONObject("message")?.optString("content").orEmpty() }
     }
 
     private suspend fun readResponse(endpoint: String, body: String, auth: String?, streaming: Boolean, provider: String, model: String, onDelta: suspend (String) -> Unit, extract: (JSONObject) -> String): ProviderResult {
@@ -97,6 +78,7 @@ class AiProviderService(context: Context) {
             setRequestProperty("Content-Type", "application/json"); setRequestProperty("Accept", if (streaming) "text/event-stream" else "application/json")
             auth?.let { setRequestProperty("Authorization", it) }
         }
+        currentCoroutineContext()[Job]?.invokeOnCompletion { c.disconnect() }
         val text = StringBuilder()
         try {
             c.outputStream.use { it.write(body.toByteArray(Charsets.UTF_8)) }
