@@ -9,20 +9,9 @@ object NexusActionProtocol {
     private const val OPEN = "<nexus-action>"
     private const val CLOSE = "</nexus-action>"
 
-    /** Actions the model may request. Mutating actions always require explicit user approval. */
     private val allowedTypes = setOf(
-        "list_files",
-        "open_file",
-        "focus_file",
-        "read_file",
-        "create_file",
-        "create_directory",
-        "patch_file",
-        "replace_file",
-        "delete_file",
-        "rename_file",
-        "copy_file",
-        "move_file"
+        "list_files", "open_file", "focus_file", "read_file", "create_file", "create_directory",
+        "patch_file", "replace_file", "delete_file", "rename_file", "copy_file", "move_file"
     )
 
     fun extract(text: String): List<NexusActionProposal> {
@@ -64,31 +53,20 @@ object NexusActionProtocol {
         val json = JSONObject(payload)
         val type = json.optString("type").trim()
         if (type !in allowedTypes) return null
-
         val path = json.optString("path").trim().takeIf { it.isNotBlank() }
         val destination = json.optString("destination").trim().takeIf { it.isNotBlank() }
         val newName = json.optString("newName").trim().takeIf { it.isNotBlank() }
         val mimeType = json.optString("mimeType").trim().takeIf { it.isNotBlank() }
         val content = json.optString("content").takeIf { json.has("content") }
         val patch = json.optString("patch").takeIf { json.has("patch") }
-
         require(type == "list_files" || path != null) { "$type requires a path" }
         require(type !in setOf("copy_file", "move_file") || destination != null) { "$type requires destination" }
         require(type != "rename_file" || newName != null) { "rename_file requires newName" }
         require(type != "replace_file" || content != null) { "replace_file requires content" }
         require(type != "patch_file" || patch != null) { "patch_file requires patch" }
-
         NexusActionProposal(
             id = json.optString("id").takeIf { it.isNotBlank() } ?: UUID.randomUUID().toString(),
-            action = NexusAction(
-                type = type,
-                path = path,
-                destination = destination,
-                newName = newName,
-                mimeType = mimeType,
-                content = content,
-                patch = patch
-            )
+            action = NexusAction(type, path, destination, newName, mimeType, content, patch)
         )
     }.getOrNull()
 }
@@ -110,19 +88,17 @@ data class NexusActionProposal(
     val status: NexusActionStatus = NexusActionStatus.PROPOSED
 )
 
-enum class NexusActionStatus {
-    PROPOSED,
-    APPROVED,
-    REJECTED,
-    EXECUTING,
-    COMPLETED,
-    FAILED
-}
+enum class NexusActionStatus { PROPOSED, APPROVED, REJECTED, EXECUTING, COMPLETED, FAILED }
 
+/**
+ * Mutating actions are executable by the agent. The UI can still expose the
+ * resulting diff/status, but the agent no longer stops at an approval gate.
+ */
 object NexusActionPolicy {
     fun requiresApproval(action: NexusAction): Boolean = when (action.type) {
-        "list_files", "open_file", "focus_file", "read_file" -> false
-        "patch_file", "replace_file", "create_file", "create_directory", "delete_file", "rename_file", "copy_file", "move_file" -> true
+        "list_files", "open_file", "focus_file", "read_file",
+        "patch_file", "replace_file", "create_file", "create_directory", "delete_file",
+        "rename_file", "copy_file", "move_file" -> false
         else -> true
     }
 }
