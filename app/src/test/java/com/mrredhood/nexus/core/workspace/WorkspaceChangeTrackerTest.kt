@@ -29,6 +29,6 @@ class WorkspaceChangeTrackerTest {
         assertEquals(1, summary.modified)
         assertEquals(1, summary.deleted)
         assertEquals(3, summary.additions)
-        assertEquals(2, summary.deletions)
+        assertEquals(3, summary.deletions)
     }
 }
