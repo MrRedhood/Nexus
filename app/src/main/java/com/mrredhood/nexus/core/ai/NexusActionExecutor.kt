@@ -50,7 +50,8 @@ class NexusActionExecutor(private val fileSystem: WorkspaceFileSystem) {
                     val path = requirePath(action)
                     val content = action.content.orEmpty()
                     val file = fileSystem.write(workspace, path, content, action.mimeType ?: "text/plain")
-                    ActionExecutionResult(true, "Created $path", file.content)
+                    val additions = content.replace("\r\n", "\n").split('\n').let { if (it.size == 1 && it[0].isEmpty()) 0 else it.size }
+                    ActionExecutionResult(true, "Created $path (+$additions lines)", file.content)
                 }
                 "create_directory" -> {
                     val path = requirePath(action)
@@ -77,7 +78,7 @@ class NexusActionExecutor(private val fileSystem: WorkspaceFileSystem) {
                 "delete_file" -> {
                     val path = requirePath(action)
                     val current = fileSystem.read(workspace, path)
-                    val deletedLines = current.content.split('\n').let { if (it.size == 1 && it[0].isEmpty()) 0 else it.size }
+                    val deletedLines = current.content.replace("\r\n", "\n").split('\n').let { if (it.size == 1 && it[0].isEmpty()) 0 else it.size }
                     fileSystem.delete(workspace, path)
                     ActionExecutionResult(true, "Deleted $path (-$deletedLines lines)")
                 }
@@ -104,21 +105,17 @@ class NexusActionExecutor(private val fileSystem: WorkspaceFileSystem) {
             }
         }.getOrElse { ActionExecutionResult(false, it.message ?: "Action failed") }
 
-        val review = if (result.success && action.type in setOf("create_file", "replace_file", "patch_file", "delete_file")) {
-            runCatching { preview(workspace, action.let { NexusActionProposal(it.id, it) }) }.getOrNull()
-        } else null
+        val counts = parseCounts(result.message)
         NexusActionExecutionRegistry.record(
-            NexusActionExecutionSummary(
-                actionId = action.id,
-                actionType = action.type,
-                path = action.path,
-                success = result.success,
-                additions = review?.additions ?: 0,
-                deletions = review?.deletions ?: 0,
-                message = result.message
-            )
+            NexusActionExecutionSummary(action.id, action.type, action.path, result.success, counts.first, counts.second, result.message)
         )
         return result
+    }
+
+    private fun parseCounts(message: String): Pair<Int, Int> {
+        val additions = Regex("\\+(\\d+) lines?").find(message)?.groupValues?.get(1)?.toIntOrNull() ?: 0
+        val deletions = Regex("-(\\d+) lines?").find(message)?.groupValues?.get(1)?.toIntOrNull() ?: 0
+        return additions to deletions
     }
 
     private fun requirePath(action: NexusAction): String = action.path?.trim()?.takeIf { it.isNotEmpty() }
