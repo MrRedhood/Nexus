@@ -90,15 +90,28 @@ data class NexusActionProposal(
 
 enum class NexusActionStatus { PROPOSED, APPROVED, REJECTED, EXECUTING, COMPLETED, FAILED }
 
-/**
- * Mutating actions are executable by the agent. The UI can still expose the
- * resulting diff/status, but the agent no longer stops at an approval gate.
- */
+/** Central AI workspace permission policy. */
 object NexusActionPolicy {
-    fun requiresApproval(action: NexusAction): Boolean = when (action.type) {
-        "list_files", "open_file", "focus_file", "read_file",
-        "patch_file", "replace_file", "create_file", "create_directory", "delete_file",
-        "rename_file", "copy_file", "move_file" -> false
-        else -> true
+    private val mutatingTypes = setOf(
+        "create_file", "create_directory", "patch_file", "replace_file",
+        "delete_file", "rename_file", "copy_file", "move_file"
+    )
+    private val destructiveTypes = setOf("delete_file", "rename_file", "move_file", "copy_file")
+
+    fun isMutating(action: NexusAction): Boolean = action.type in mutatingTypes
+
+    fun canAutoExecute(action: NexusAction, permissionMode: String): Boolean {
+        if (!isMutating(action)) return true
+        return when (permissionMode.lowercase()) {
+            "never", "restricted" -> false
+            "some", "standard" -> action.type !in destructiveTypes
+            "autonomous", "full" -> true
+            else -> true
+        }
     }
+
+    fun requiresApproval(action: NexusAction, permissionMode: String): Boolean =
+        isMutating(action) && !canAutoExecute(action, permissionMode) && permissionMode.lowercase() != "never"
+
+    fun requiresApproval(action: NexusAction): Boolean = false
 }
