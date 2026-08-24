@@ -41,6 +41,7 @@ import com.mrredhood.nexus.core.workspace.EntryType
 import com.mrredhood.nexus.core.workspace.Workspace
 import com.mrredhood.nexus.core.workspace.WorkspaceEntry
 import com.mrredhood.nexus.ui.ChatScreen
+import com.mrredhood.nexus.ui.GitScreen
 import com.mrredhood.nexus.ui.NexusViewModel
 import com.mrredhood.nexus.ui.NexusViewModelFactory
 import com.mrredhood.nexus.ui.SettingsScreen
@@ -142,15 +143,20 @@ private fun WorkspaceScreen(project: NexusProject, workspace: Workspace, onBack:
     var deleteTarget by remember { mutableStateOf<WorkspaceEntry?>(null) }
     var discardDialog by remember { mutableStateOf(false) }
     var showAiChat by remember { mutableStateOf(false) }
+    var showGit by remember { mutableStateOf(false) }
 
     LaunchedEffect(workspace.id) { vm.open(workspace) }
 
     BackHandler {
-        if (showAiChat) showAiChat = false
-        else if (editorContent != null) { if (editorDirty) discardDialog = true else vm.clearEditor() }
-        else if (!vm.back(workspace)) onBack()
+        when {
+            showGit -> showGit = false
+            showAiChat -> showAiChat = false
+            editorContent != null -> { if (editorDirty) discardDialog = true else vm.clearEditor() }
+            !vm.back(workspace) -> onBack()
+        }
     }
 
+    if (showGit) { GitScreen(project, workspace) { showGit = false }; return }
     if (showAiChat) { ChatScreen(project = project, workspace = workspace, onClose = { showAiChat = false }); return }
 
     if (editorContent != null && editorPath != null) {
@@ -162,7 +168,7 @@ private fun WorkspaceScreen(project: NexusProject, workspace: Workspace, onBack:
     val segments = currentPath.split('/').filter { it.isNotBlank() }
     val breadcrumbPaths = buildList { add(""); var path = ""; segments.forEach { segment -> path = if (path.isBlank()) segment else "$path/$segment"; add(path) } }
 
-    Scaffold(topBar = { TopAppBar(title = { Text(project.name) }, navigationIcon = { IconButton(onClick = { if (!vm.back(workspace)) onBack() }) { Icon(Icons.Outlined.ArrowBack, "Back") } }, actions = { IconButton(onClick = { showAiChat = true }) { Icon(Icons.Outlined.AutoAwesome, "AI chat") }; IconButton(onClick = { vm.refresh(workspace) }) { Icon(Icons.Outlined.Refresh, "Refresh") }; IconButton(onClick = { createDialog = "file" }) { Icon(Icons.Outlined.Add, "Create file") }; IconButton(onClick = { createDialog = "folder" }) { Icon(Icons.Outlined.CreateNewFolder, "Create folder") } }) }) { padding ->
+    Scaffold(topBar = { TopAppBar(title = { Text(project.name) }, navigationIcon = { IconButton(onClick = { if (!vm.back(workspace)) onBack() }) { Icon(Icons.Outlined.ArrowBack, "Back") } }, actions = { IconButton(onClick = { showGit = true }) { Icon(Icons.Outlined.Source, "Source control") }; IconButton(onClick = { showAiChat = true }) { Icon(Icons.Outlined.AutoAwesome, "AI chat") }; IconButton(onClick = { vm.refresh(workspace) }) { Icon(Icons.Outlined.Refresh, "Refresh") }; IconButton(onClick = { createDialog = "file" }) { Icon(Icons.Outlined.Add, "Create file") }; IconButton(onClick = { createDialog = "folder" }) { Icon(Icons.Outlined.CreateNewFolder, "Create folder") } }) }) { padding ->
         Column(Modifier.fillMaxSize().padding(padding).padding(horizontal = 16.dp)) {
             Card(Modifier.fillMaxWidth().padding(top = 8.dp), shape = MaterialTheme.shapes.large) { Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 12.dp, vertical = 10.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) { breadcrumbPaths.forEachIndexed { index, path -> if (index > 0) Icon(Icons.Outlined.ChevronRight, null, modifier = Modifier.size(18.dp)); TextButton(onClick = { vm.navigateTo(workspace, path) }) { Text(if (index == 0) workspace.displayName else segments[index - 1], maxLines = 1) } } } }
             Card(Modifier.fillMaxWidth().padding(top = 10.dp), shape = MaterialTheme.shapes.large, colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHighest), onClick = { showAiChat = true }) { Row(Modifier.fillMaxWidth().padding(16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) { Icon(Icons.Outlined.AutoAwesome, "AI chat"); Column(Modifier.weight(1f)) { Text("Ask Nexus AI", style = MaterialTheme.typography.titleMedium); Text("Analyze, search, explain, fix, refactor or edit this workspace", style = MaterialTheme.typography.bodySmall) }; Icon(Icons.Outlined.ChevronRight, null) } }
