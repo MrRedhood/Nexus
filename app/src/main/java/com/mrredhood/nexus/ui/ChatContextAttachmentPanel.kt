@@ -40,8 +40,41 @@ fun ChatContextAttachmentPanel(
     context: ChatContext,
     onContextChanged: (ChatContext) -> Unit
 ) {
+    val baseCurrentFile = remember(context.currentFile) { mutableStateOf(context.currentFile) }
+    val baseSelection = remember(context.selection) { mutableStateOf(context.selection) }
+    val baseGitDiff = remember(context.gitDiff) { mutableStateOf(context.gitDiff) }
+    val baseTerminal = remember(context.terminalOutput) { mutableStateOf(context.terminalOutput) }
+    val baseWorkspace = remember(context.workspaceSummary) { mutableStateOf(context.workspaceSummary) }
     var pickerOpen by remember { mutableStateOf(false) }
     var expanded by remember { mutableStateOf(false) }
+
+    fun apply(
+        current: Boolean = context.includeCurrentFile,
+        selection: Boolean = context.includeSelection,
+        git: Boolean = context.includeGitDiff,
+        terminal: Boolean = context.includeTerminalOutput,
+        workspaceSummary: Boolean = context.includeWorkspaceSummary,
+        attachments: List<ChatAttachment> = context.attachedFiles
+    ) {
+        val attachmentContext = attachments.joinToString("\n\n") { "ATTACHED FILE: ${it.path}\n${it.content}" }
+        val combinedWorkspace = listOfNotNull(baseWorkspace.value?.takeIf { workspaceSummary }, attachmentContext.takeIf { it.isNotBlank() }).joinToString("\n\n")
+        onContextChanged(
+            context.copy(
+                currentFile = baseCurrentFile.value.takeIf { current },
+                selection = baseSelection.value.takeIf { selection },
+                gitDiff = baseGitDiff.value.takeIf { git },
+                terminalOutput = baseTerminal.value.takeIf { terminal },
+                workspaceSummary = combinedWorkspace.takeIf { it.isNotBlank() },
+                includeCurrentFile = current,
+                includeSelection = selection,
+                includeGitDiff = git,
+                includeTerminalOutput = terminal,
+                includeWorkspaceSummary = workspaceSummary,
+                attachedFiles = attachments
+            )
+        )
+    }
+
     val enabledCount = listOf(context.includeCurrentFile, context.includeSelection, context.includeGitDiff, context.includeTerminalOutput, context.includeWorkspaceSummary).count { it }
     val sourceCount = enabledCount + context.attachedFiles.size
 
@@ -58,22 +91,22 @@ fun ChatContextAttachmentPanel(
             if (context.attachedFiles.isNotEmpty()) {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     context.attachedFiles.take(4).forEach { attachment ->
-                        FilterChip(selected = true, onClick = { onContextChanged(context.copy(attachedFiles = context.attachedFiles.filterNot { it.path == attachment.path })) }, label = { Text(attachment.path.substringAfterLast('/')) })
+                        FilterChip(selected = true, onClick = { apply(attachments = context.attachedFiles.filterNot { it.path == attachment.path }) }, label = { Text(attachment.path.substringAfterLast('/')) })
                     }
                     if (context.attachedFiles.size > 4) Text("+${context.attachedFiles.size - 4} more", style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(top = 8.dp))
                 }
             }
             if (expanded) {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    ContextToggle("Current file", context.includeCurrentFile) { onContextChanged(context.copy(includeCurrentFile = !context.includeCurrentFile)) }
-                    ContextToggle("Selection", context.includeSelection) { onContextChanged(context.copy(includeSelection = !context.includeSelection)) }
-                    ContextToggle("Git diff", context.includeGitDiff) { onContextChanged(context.copy(includeGitDiff = !context.includeGitDiff)) }
+                    ContextToggle("Current file", context.includeCurrentFile) { apply(current = !context.includeCurrentFile) }
+                    ContextToggle("Selection", context.includeSelection) { apply(selection = !context.includeSelection) }
+                    ContextToggle("Git diff", context.includeGitDiff) { apply(git = !context.includeGitDiff) }
                 }
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    ContextToggle("Terminal", context.includeTerminalOutput) { onContextChanged(context.copy(includeTerminalOutput = !context.includeTerminalOutput)) }
-                    ContextToggle("Workspace", context.includeWorkspaceSummary) { onContextChanged(context.copy(includeWorkspaceSummary = !context.includeWorkspaceSummary)) }
+                    ContextToggle("Terminal", context.includeTerminalOutput) { apply(terminal = !context.includeTerminalOutput) }
+                    ContextToggle("Workspace", context.includeWorkspaceSummary) { apply(workspaceSummary = !context.includeWorkspaceSummary) }
                 }
-                Text("Selected sources are still bounded by Nexus AI context token limits.", style = MaterialTheme.typography.labelSmall)
+                Text("Selected sources are passed through Nexus AI context budgeting; oversized or low-priority items can be truncated or dropped.", style = MaterialTheme.typography.labelSmall)
             }
         }
     }
@@ -84,10 +117,7 @@ fun ChatContextAttachmentPanel(
             fileSystem = fileSystem,
             selectedPaths = context.attachedFiles.map { it.path }.toSet(),
             onDismiss = { pickerOpen = false },
-            onAttach = { attachment ->
-                val next = context.attachedFiles.filterNot { it.path == attachment.path } + attachment
-                onContextChanged(context.copy(attachedFiles = next))
-            }
+            onAttach = { attachment -> apply(attachments = context.attachedFiles.filterNot { it.path == attachment.path } + attachment) }
         )
     }
 }
