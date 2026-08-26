@@ -72,7 +72,7 @@
 - 🔄 Repository list/search/connect/create/fork
 - 🔄 Branch operations
 - 🔄 Pull requests
-- ⬜ Issues
+- ✅ Issues
 - 🔄 Actions
 - ✅ Checks
 - ⬜ Webhooks
@@ -81,9 +81,9 @@
 ### 08 GitHub Actions / Cloud Build
 - 🔄 Workflow detection
 - ⬜ Workflow generator
-- ⬜ Android Debug APK workflow
-- ⬜ Release APK workflow
-- ⬜ AAB workflow
+- ✅ Android Debug APK workflow
+- ✅ Release APK workflow
+- ✅ AAB workflow
 - ⬜ Build profiles
 - 🔄 Dispatch/tracking
 - ⬜ Live logs
@@ -93,8 +93,8 @@
 
 ### 09 Build / Artifact System
 - ⬜ Build records
-- ⬜ APK/AAB artifacts
-- ⬜ Install/download/share
+- 🔄 APK/AAB artifacts
+- 🔄 Install/download/share
 - ⬜ Commit/branch/variant/size/run/checksum metadata
 - ⬜ Artifact retention/management
 
@@ -196,11 +196,11 @@
 
 ### 21 GitHub Engineering
 - 🔄 PR creation/listing/detail/diff/merge/close
-- ⬜ PR review/comments/approval workflow
-- ⬜ Issue creation/edit/comment/close
-- ⬜ Release creation
+- 🔄 PR review/comments/approval workflow
+- ✅ Issue creation/edit/comment/close
+- 🔄 Release creation/edit/publish/assets
 - ⬜ Changelog generation
-- ⬜ CI/artifact linking
+- 🔄 CI/artifact linking
 
 ### 22 Advanced Builds
 - ⬜ Flavors/variants
@@ -291,14 +291,17 @@
 - ✅ GitHub Pull Request management UI
 - ✅ GitHub Checks API service: real check runs and annotations
 - ✅ ChatGPT-style GitHub Checks screen with live repository data and GitHub links
-- 🔄 GitHub repository discovery and Actions foundation
+- ✅ GitHub issue service: list, detail, comments, create, update, close/reopen, labels, assignees
+- ✅ ChatGPT-style GitHub Issues management UI
+- 🔄 GitHub repository discovery and Actions build/artifact foundation
 
 ## Next priority
 
-1. ⬜ Complete remaining Git first-class operations: stash, merge/conflict resolution, reset/cherry-pick.
-2. 🔄 Complete GitHub Engineering: PR review/comments/approval, then Issues.
-3. ⬜ Build cloud APK/AAB pipeline.
-4. ⬜ Complete AI tool permissions + patch/snapshot/rollback.
-5. ⬜ Complete task/coding/debug agents.
+1. 🔄 GitHub Releases: list, detail, draft/create, edit, publish, delete, tags, notes, prerelease, assets.
+2. 🔄 Actions run details: jobs, status/conclusion, duration, logs, rerun and build→commit→artifact linking.
+3. ⬜ Build failure intelligence and richer APK/AAB artifact management.
+4. ⬜ Complete remaining Git first-class operations: stash, merge/conflict resolution, reset/cherry-pick.
+5. ⬜ Complete AI tool permissions + patch/snapshot/rollback.
+6. ⬜ Complete task/coding/debug agents.
 
-_Last updated: 2026-08-26_
+_Last updated: 2026-08-26 — GitHub Issues milestone recorded after CI #260 passed._
