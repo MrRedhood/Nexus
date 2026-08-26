@@ -7,23 +7,34 @@ import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
 
-/** Real Git operations that are exposed by GitHub's Git/REST APIs. */
+/** Real Git operations exposed by GitHub's Git/REST APIs. */
 class GitHubAdvancedGitService {
-    suspend fun mergeBranches(repository: String, base: String, head: String, token: String): String = withContext(Dispatchers.IO) {
+    suspend fun mergeBranches(repository: String, base: String, head: String, token: String, message: String? = null): String = withContext(Dispatchers.IO) {
+        require(base.isNotBlank() && head.isNotBlank() && base != head) { "Choose two different branches." }
         val body = JSONObject().put("base", base).put("head", head)
-        val response = request("POST", "/repos/$repository/merges", token, body)
-        JSONObject(response).optString("sha").ifBlank { response }
+        if (!message.isNullOrBlank()) body.put("commit_message", message.trim())
+        try {
+            val response = request("POST", "/repos/$repository/merges", token, body)
+            JSONObject(response).optString("sha").ifBlank { response }
+        } catch (error: IllegalStateException) {
+            if (error.message?.startsWith("GitHub 409:") == true) {
+                throw IllegalStateException("Merge conflict between $base and $head. Resolve the conflicting changes before merging.")
+            }
+            throw error
+        }
     }
 
     suspend fun resetBranch(repository: String, branch: String, targetSha: String, token: String, force: Boolean = false) = withContext(Dispatchers.IO) {
         require(targetSha.matches(Regex("[0-9a-fA-F]{7,64}"))) { "Enter a valid commit SHA." }
+        require(branch.isNotBlank()) { "Branch is required." }
         request("PATCH", "/repos/$repository/git/refs/heads/${encode(branch)}", token, JSONObject().put("sha", targetSha).put("force", force))
         Unit
     }
 
     suspend fun cherryPick(repository: String, commitSha: String, branch: String, token: String): Pair<Boolean, String> = withContext(Dispatchers.IO) {
         require(commitSha.matches(Regex("[0-9a-fA-F]{7,64}"))) { "Enter a valid commit SHA." }
-        val response = request("POST", "/repos/$repository/commits/${encode(commitSha)}/cherry-pick", token, JSONObject().put("mainline", 0).put("branch", branch))
+        require(branch.isNotBlank()) { "Branch is required." }
+        val response = request("POST", "/repos/$repository/commits/${encode(commitSha)}/cherry-pick", token, JSONObject().put("branch", branch))
         val json = JSONObject(response)
         val status = json.optString("status")
         val sha = json.optString("sha")
@@ -31,7 +42,7 @@ class GitHubAdvancedGitService {
     }
 
     suspend fun createStashBranch(repository: String, branch: String, token: String, name: String): String = withContext(Dispatchers.IO) {
-        require(name.matches(Regex("nexus/stash/[A-Za-z0-9._-]+"))) { "Invalid stash name." }
+        require(name.matches(Regex("nexus/stash/[A-Za-z0-9._-]+"))) { "Invalid stash name. Use nexus/stash/<name>." }
         val baseSha = JSONObject(request("GET", "/repos/$repository/git/ref/heads/${encode(branch)}", token))
             .getJSONObject("object").getString("sha")
         request("POST", "/repos/$repository/git/refs", token, JSONObject().put("ref", "refs/heads/$name").put("sha", baseSha))
@@ -39,7 +50,7 @@ class GitHubAdvancedGitService {
     }
 
     suspend fun dropStash(repository: String, stashBranch: String, token: String) = withContext(Dispatchers.IO) {
-        require(stashBranch.startsWith("nexus/stash/")) { "Only Nexus stash branches can be dropped." }
+        require(stashBranch.matches(Regex("nexus/stash/[A-Za-z0-9._-]+"))) { "Only Nexus stash branches can be dropped." }
         request("DELETE", "/repos/$repository/git/refs/heads/${encode(stashBranch)}", token)
     }
 
