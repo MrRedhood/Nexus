@@ -7,24 +7,25 @@ on:
     branches: [ main ]
   workflow_dispatch:
     inputs:
-      build_variant:
-        description: "APK variant to build"
+      build_target:
+        description: "Android artifact to build"
         required: false
         default: debug
         type: choice
         options:
           - debug
           - release
+          - aab
 
 permissions:
   contents: read
 
 concurrency:
-  group: nexus-android-${{ github.ref }}-${{ github.event.inputs.build_variant || 'debug' }}
+  group: nexus-android-${{ github.ref }}-${{ github.event.inputs.build_target || 'debug' }}
   cancel-in-progress: false
 
 env:
-  BUILD_VARIANT: ${{ github.event.inputs.build_variant || 'debug' }}
+  BUILD_TARGET: ${{ github.event.inputs.build_target || 'debug' }}
 
 jobs:
   android:
@@ -51,17 +52,31 @@ jobs:
           gradle-version: "8.11.1"
 
       - name: Assemble APK
-        run: gradle --no-daemon --stacktrace assemble${BUILD_VARIANT^}
+        if: env.BUILD_TARGET == 'debug' || env.BUILD_TARGET == 'release'
+        run: gradle --no-daemon --stacktrace assemble${BUILD_TARGET^}
+
+      - name: Assemble AAB
+        if: env.BUILD_TARGET == 'aab'
+        run: gradle --no-daemon --stacktrace bundleRelease
 
       - name: Run unit tests
         run: gradle --no-daemon --stacktrace testDebugUnitTest
 
       - name: Upload APK artifact
-        if: success()
+        if: success() && (env.BUILD_TARGET == 'debug' || env.BUILD_TARGET == 'release')
         uses: actions/upload-artifact@v4
         with:
-          name: nexus-${{ env.BUILD_VARIANT }}-apk-${{ github.sha }}
-          path: app/build/outputs/apk/${{ env.BUILD_VARIANT }}/*.apk
+          name: nexus-${{ env.BUILD_TARGET }}-apk-${{ github.sha }}
+          path: app/build/outputs/apk/${{ env.BUILD_TARGET }}/*.apk
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload AAB artifact
+        if: success() && env.BUILD_TARGET == 'aab'
+        uses: actions/upload-artifact@v4
+        with:
+          name: nexus-release-aab-${{ github.sha }}
+          path: app/build/outputs/bundle/release/*.aab
           if-no-files-found: error
           retention-days: 14
 
