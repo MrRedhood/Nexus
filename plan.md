@@ -111,9 +111,9 @@
 - 🔄 Multi-provider abstraction
 - 🔄 Model selection
 - 🔄 Streaming
-- ⬜ Gemini/OpenAI/Claude/OpenRouter/DeepInfra/LiteLLM/custom providers
-- ⬜ API key management
-- ⬜ Token usage/context windows
+- ✅ Gemini/OpenAI/Claude/OpenRouter/Groq/Mistral/DeepSeek/xAI/Together AI/Fireworks AI/Cerebras/Perplexity/DeepInfra/LiteLLM/custom OpenAI-compatible provider selection
+- ✅ Per-provider encrypted API key management
+- 🔄 Token usage/context windows
 - ⬜ Provider errors/fallback
 
 ### 13 AI Context Engine
@@ -294,6 +294,7 @@
 - ✅ Rich Android artifact management: APK/AAB detection, build metadata, expiration, download/extraction, APK install and AAB sharing
 - ✅ Deterministic CI failure intelligence: ranked known failure signatures, contextual evidence, line numbers and no-fabrication unknown handling
 - ✅ Advanced Git operations hardening: validated stash branches, merge commit messages, explicit merge-conflict errors, safe reset/cherry-pick validation
+- ✅ Multi-provider AI settings restored with per-provider API keys and live model catalogue
 - 🔄 GitHub repository discovery and Actions build/artifact foundation
 
 ## Next priority
@@ -302,4 +303,4 @@
 2. ⬜ Complete AI tool permissions + patch/snapshot/rollback integration.
 3. ⬜ Complete task/coding/debug agents.
 
-_Last updated: 2026-08-26 — advanced Git operations hardening verified by Android CI after commit d3f78a3e12e95406070e2fe0b4079440e3986a0b (run 297)._
+_Last updated: 2026-08-26 — multi-provider AI settings and live model selection implementation added; CI verification pending._
