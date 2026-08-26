@@ -31,26 +31,38 @@ data class BuildArtifact(
 )
 
 class GitHubActionsBuildService {
-    suspend fun dispatch(repository: String, token: String, branch: String, variant: String) = withContext(Dispatchers.IO) {
+    companion object {
+        const val DEBUG_APK = "debug"
+        const val RELEASE_APK = "release"
+        const val RELEASE_AAB = "aab"
+    }
+
+    suspend fun dispatch(repository: String, token: String, branch: String, target: String) = withContext(Dispatchers.IO) {
         require(repository.matches(Regex("[^/]+/[^/]+"))) { "GitHub repository must be owner/name." }
         require(branch.isNotBlank()) { "Branch is required." }
-        require(variant == "debug" || variant == "release") { "Unsupported build variant." }
+        require(target in setOf(DEBUG_APK, RELEASE_APK, RELEASE_AAB)) { "Unsupported build target." }
         request("POST", "/repos/$repository/actions/workflows/android-ci.yml/dispatches", token, JSONObject().apply {
             put("ref", branch)
-            put("inputs", JSONObject().put("build_variant", variant))
+            put("inputs", JSONObject().put("build_target", target))
         })
         Unit
     }
+
+    suspend fun dispatchDebugApk(repository: String, token: String, branch: String) =
+        dispatch(repository, token, branch, DEBUG_APK)
+
+    suspend fun dispatchReleaseApk(repository: String, token: String, branch: String) =
+        dispatch(repository, token, branch, RELEASE_APK)
+
+    suspend fun dispatchReleaseAab(repository: String, token: String, branch: String) =
+        dispatch(repository, token, branch, RELEASE_AAB)
 
     suspend fun latestRuns(repository: String, token: String, branch: String = "main", limit: Int = 10): List<BuildRun> = withContext(Dispatchers.IO) {
         val query = "?branch=${encode(branch)}&per_page=${limit.coerceIn(1, 20)}"
         val json = request("GET", "/repos/$repository/actions/workflows/android-ci.yml/runs$query", token, null)
         val runs = json.optJSONArray("workflow_runs") ?: return@withContext emptyList()
         buildList {
-            for (i in 0 until runs.length()) {
-                val item = runs.getJSONObject(i)
-                add(item.toBuildRun())
-            }
+            for (i in 0 until runs.length()) add(runs.getJSONObject(i).toBuildRun())
         }
     }
 
