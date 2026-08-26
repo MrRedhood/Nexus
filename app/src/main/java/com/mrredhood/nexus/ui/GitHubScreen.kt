@@ -1,8 +1,10 @@
 package com.mrredhood.nexus.ui
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -13,8 +15,10 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
@@ -65,12 +69,12 @@ fun GitHubScreen(project: NexusProject, onBack: () -> Unit) {
     var selectedPrFiles by remember { mutableStateOf<List<GitHubPullRequestFile>>(emptyList()) }
     var showCreatePr by remember { mutableStateOf(false) }
     var prState by remember { mutableStateOf("open") }
+    var showIssues by remember { mutableStateOf(false) }
 
     fun token() = tokenStore.get("github")
 
     fun loadRepositories() {
-        val accessToken = token()
-        if (accessToken.isNullOrBlank()) { error = "Add a GitHub token in Settings > GitHub first."; return }
+        val accessToken = token() ?: run { error = "Add a GitHub token in Settings > GitHub first."; return }
         scope.launch {
             loading = true; error = null
             runCatching { service.repositories(accessToken, query.ifBlank { null }) }
@@ -120,16 +124,32 @@ fun GitHubScreen(project: NexusProject, onBack: () -> Unit) {
         if (repository.isNotBlank()) { loadActions(); loadPullRequests() }
     }
 
+    BackHandler {
+        when {
+            showIssues -> showIssues = false
+            selectedPr != null -> selectedPr = null
+            reviewPr != null -> reviewPr = null
+            else -> onBack()
+        }
+    }
+
+    if (showIssues) {
+        GitHubIssuesScreen(project = project, onBack = { showIssues = false })
+        return
+    }
+
     Scaffold(topBar = {
-        TopAppBar(title = { Text("GitHub") }, navigationIcon = { IconButton(onClick = onBack) { Text("‹") } })
+        TopAppBar(
+            title = { Text("GitHub") },
+            navigationIcon = { IconButton(onClick = onBack) { Text("‹") } },
+            actions = { TextButton(onClick = { showIssues = true }) { Text("Issues") } }
+        )
     }) { padding ->
         LazyColumn(
             modifier = Modifier.fillMaxSize().padding(padding).padding(horizontal = 16.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            item {
-                OutlinedTextField(value = query, onValueChange = { query = it }, modifier = Modifier.fillMaxWidth(), label = { Text("Search repositories") }, singleLine = true)
-            }
+            item { OutlinedTextField(value = query, onValueChange = { query = it }, modifier = Modifier.fillMaxWidth(), label = { Text("Search repositories") }, singleLine = true) }
             item {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Button(onClick = ::loadRepositories, enabled = !loading) { Text("Search") }
@@ -137,8 +157,8 @@ fun GitHubScreen(project: NexusProject, onBack: () -> Unit) {
                 }
             }
             if (loading) item { LinearProgressIndicator(modifier = Modifier.fillMaxWidth()) }
-            error?.let { message -> item { Text(message) } }
-            item { Text("Repositories") }
+            error?.let { message -> item { Text(message, color = MaterialTheme.colorScheme.error) } }
+            item { Text("Repositories", style = MaterialTheme.typography.titleMedium) }
             items(repositories, key = { it.fullName }) { repo ->
                 Card(modifier = Modifier.fillMaxWidth()) {
                     Column(modifier = Modifier.padding(14.dp)) {
@@ -150,7 +170,7 @@ fun GitHubScreen(project: NexusProject, onBack: () -> Unit) {
             if (repository.isNotBlank()) {
                 item {
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                        Text("Pull Requests")
+                        Text("Pull Requests", style = MaterialTheme.typography.titleMedium)
                         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                             OutlinedButton(onClick = { prState = if (prState == "open") "closed" else "open"; loadPullRequests() }, enabled = !loading) { Text(if (prState == "open") "Closed" else "Open") }
                             Button(onClick = { showCreatePr = true }, enabled = !loading) { Text("New PR") }
@@ -166,7 +186,7 @@ fun GitHubScreen(project: NexusProject, onBack: () -> Unit) {
                         }
                     }
                 }
-                item { Text("Actions") }
+                item { Text("Actions", style = MaterialTheme.typography.titleMedium) }
                 items(workflows, key = { it.id }) { workflow ->
                     Card(modifier = Modifier.fillMaxWidth()) {
                         Column(modifier = Modifier.padding(14.dp)) {
@@ -186,7 +206,7 @@ fun GitHubScreen(project: NexusProject, onBack: () -> Unit) {
                         }
                     }
                 }
-                item { Text("Recent runs") }
+                item { Text("Recent runs", style = MaterialTheme.typography.titleMedium) }
                 items(runs, key = { it.id }) { run ->
                     Column(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
                         Text("${run.name} · ${run.status} ${run.conclusion ?: ""}")
@@ -241,7 +261,7 @@ fun GitHubScreen(project: NexusProject, onBack: () -> Unit) {
                 items(selectedPrFiles, key = { it.path }) { file ->
                     Column(modifier = Modifier.fillMaxWidth()) {
                         Text(file.path); Text("${file.status} · +${file.additions} -${file.deletions}")
-                        if (!file.patch.isNullOrBlank()) { Text(file.patch.take(1200), style = androidx.compose.material3.MaterialTheme.typography.bodySmall); androidx.compose.foundation.layout.Spacer(Modifier.height(4.dp)) }
+                        if (!file.patch.isNullOrBlank()) { Text(file.patch.take(1200), style = MaterialTheme.typography.bodySmall); Spacer(Modifier.height(4.dp)) }
                     }
                 }
             } },
@@ -264,7 +284,7 @@ fun GitHubScreen(project: NexusProject, onBack: () -> Unit) {
                         }
                     }) { Text("Close") }
                 }
-                if (repository.isNotBlank()) TextButton(enabled = !loading, onClick = { reviewPr = pr; selectedPr = null }) { Text("Review") }
+                TextButton(enabled = !loading, onClick = { reviewPr = pr; selectedPr = null }) { Text("Review") }
                 TextButton(onClick = { selectedPr = null }) { Text("Done") }
             } }
         )
@@ -276,14 +296,7 @@ fun GitHubScreen(project: NexusProject, onBack: () -> Unit) {
             reviewPr = null
             error = "Add a GitHub token in Settings > GitHub first."
         } else {
-            PullRequestReviewDialog(
-                repository = repository,
-                pullRequest = pr,
-                token = accessToken,
-                service = pullRequestService,
-                onDismiss = { reviewPr = null },
-                onError = { error = it }
-            )
+            PullRequestReviewDialog(repository = repository, pullRequest = pr, token = accessToken, service = pullRequestService, onDismiss = { reviewPr = null }, onError = { error = it })
         }
     }
 }
