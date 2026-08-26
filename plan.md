@@ -29,7 +29,6 @@
 - ⬜ Unified FileSystem abstraction
 
 ### 03 File System
-- ⬜ list/read/write/create/delete/rename/move/exists/search/metadata
 - 🔄 GitHub-backed file operations
 - 🔄 Workspace-wide AI file access
 - 🔄 AI create/modify/delete files and folders
@@ -75,7 +74,7 @@
 - 🔄 Pull requests
 - ⬜ Issues
 - 🔄 Actions
-- ⬜ Checks
+- ✅ Checks
 - ⬜ Webhooks
 - ⬜ Secure short-lived installation tokens
 
@@ -245,7 +244,7 @@
 - ⬜ Git
 - ⬜ Terminal
 - ⬜ GitHub authentication/repository selection
-- ⬜ Branches/commits/PRs/issues/Actions/artifacts
+- ⬜ Branches/commits/PRs/issues/Actions/Checks/artifacts
 - ⬜ Android workflow + Debug APK + Release APK + AAB
 - ⬜ Build logs/history/artifacts
 - ⬜ Multi-provider AI
@@ -290,6 +289,8 @@
 - ✅ Git commit history/log
 - ✅ GitHub pull request service: list, detail, changed files/diff, create, close, merge
 - ✅ GitHub Pull Request management UI
+- ✅ GitHub Checks API service: real check runs and annotations
+- ✅ ChatGPT-style GitHub Checks screen with live repository data and GitHub links
 - 🔄 GitHub repository discovery and Actions foundation
 
 ## Next priority
