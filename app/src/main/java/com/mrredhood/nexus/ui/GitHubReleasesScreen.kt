@@ -11,13 +11,13 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.weight
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.Checkbox
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -42,6 +42,7 @@ import com.mrredhood.nexus.core.workspace.GitHubRelease
 import com.mrredhood.nexus.core.workspace.GitHubReleaseService
 import kotlinx.coroutines.launch
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun GitHubReleasesScreen(project: NexusProject, onBack: () -> Unit) {
     val context = LocalContext.current
@@ -61,11 +62,7 @@ fun GitHubReleasesScreen(project: NexusProject, onBack: () -> Unit) {
     fun refresh() {
         val accessToken = token() ?: run { error = "Add a GitHub token in Settings > GitHub first."; return }
         if (repository.isBlank()) { error = "Connect a GitHub repository to this project first."; return }
-        scope.launch {
-            loading = true; error = null
-            runCatching { service.list(repository, accessToken, includeDrafts) }.onSuccess { releases = it }.onFailure { error = it.message }
-            loading = false
-        }
+        scope.launch { loading = true; error = null; runCatching { service.list(repository, accessToken, includeDrafts) }.onSuccess { releases = it }.onFailure { error = it.message }; loading = false }
     }
     fun open(release: GitHubRelease) {
         val accessToken = token() ?: return
