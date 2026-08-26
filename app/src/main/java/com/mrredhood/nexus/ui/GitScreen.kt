@@ -240,11 +240,7 @@ fun GitScreen(project: NexusProject, workspace: Workspace, onBack: () -> Unit) {
                                 Checkbox(
                                     checked = diff.path in staged,
                                     onCheckedChange = { checked ->
-                                        staged = if (checked) {
-                                            staged + diff.path
-                                        } else {
-                                            staged - diff.path
-                                        }
+                                        staged = if (checked) staged + diff.path else staged - diff.path
                                     }
                                 )
                                 Column(modifier = Modifier.fillMaxWidth()) {
@@ -308,14 +304,7 @@ fun GitScreen(project: NexusProject, workspace: Workspace, onBack: () -> Unit) {
                     enabled = message.isNotBlank() && !loading,
                     onClick = {
                         runGit { accessToken ->
-                            val result = service.commitAndPush(
-                                repository,
-                                branch,
-                                accessToken,
-                                workspace,
-                                message,
-                                staged
-                            )
+                            val result = service.commitAndPush(repository, branch, accessToken, workspace, message, staged)
                             staged = emptySet()
                             info = "Committed ${result.commitSha.take(7)}"
                             showCommit = false
@@ -328,9 +317,7 @@ fun GitScreen(project: NexusProject, workspace: Workspace, onBack: () -> Unit) {
                 }
             },
             dismissButton = {
-                TextButton(onClick = { showCommit = false }) {
-                    Text("Cancel")
-                }
+                TextButton(onClick = { showCommit = false }) { Text("Cancel") }
             }
         )
     }
@@ -373,9 +360,26 @@ fun GitScreen(project: NexusProject, workspace: Workspace, onBack: () -> Unit) {
                     LazyColumn {
                         items(branches, key = { it.name }) { gitBranch ->
                             TextButton(
+                                enabled = !loading,
                                 onClick = {
-                                    branch = gitBranch.name
-                                    showBranches = false
+                                    if (gitBranch.name == branch) {
+                                        showBranches = false
+                                    } else {
+                                        runGit { accessToken ->
+                                            val currentStatus = service.status(repository, branch, accessToken, workspace)
+                                            if (currentStatus.changed.isNotEmpty() || currentStatus.added.isNotEmpty() || currentStatus.deleted.isNotEmpty()) {
+                                                error = "Commit or discard local changes before switching branches."
+                                                return@runGit
+                                            }
+                                            val count = service.fetch(repository, gitBranch.name, accessToken, workspace)
+                                            branch = gitBranch.name
+                                            staged = emptySet()
+                                            info = "Checked out ${gitBranch.name} ($count files)"
+                                            showBranches = false
+                                            status = service.status(repository, branch, accessToken, workspace)
+                                            diffs = service.diff(repository, branch, accessToken, workspace)
+                                        }
+                                    }
                                 }
                             ) {
                                 Text(if (gitBranch.current) "✓ ${gitBranch.name}" else gitBranch.name)
@@ -407,10 +411,8 @@ fun GitScreen(project: NexusProject, workspace: Workspace, onBack: () -> Unit) {
                         items(commits, key = { it.sha }) { commit ->
                             Column(modifier = Modifier.padding(vertical = 6.dp)) {
                                 Text("${commit.sha.take(7)} · ${commit.message}")
-                                Text(
-                                    "${commit.author} · ${commit.timestamp}",
-                                    style = MaterialTheme.typography.labelSmall
-                                )
+                                Text("${commit.author} · ${commit.timestamp}")
+                                Text("${commit.filesChanged} files changed")
                             }
                         }
                     }
