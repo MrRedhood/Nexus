@@ -19,304 +19,39 @@ data class GitDiff(val path: String, val before: String, val after: String, val 
 data class GitHubRepository(val fullName: String, val defaultBranch: String, val private: Boolean, val description: String?)
 data class GitHubWorkflow(val id: Long, val name: String, val path: String, val state: String, val url: String?)
 data class GitHubWorkflowRun(val id: Long, val name: String, val status: String, val conclusion: String?, val branch: String, val sha: String, val createdAt: String, val updatedAt: String, val htmlUrl: String?)
+data class GitHubWorkflowJob(val id: Long, val name: String, val status: String, val conclusion: String?, val startedAt: String, val completedAt: String?, val htmlUrl: String?)
 data class GitHubArtifact(val id: Long, val name: String, val sizeBytes: Long, val expired: Boolean, val createdAt: String, val expiresAt: String?, val downloadUrl: String?)
 
 class GitHubRepositoryService(private val fileSystem: WorkspaceFileSystem) {
-    suspend fun status(repository: String, branch: String, token: String, workspace: Workspace): GitHubSyncStatus = withContext(Dispatchers.IO) {
-        val remote = loadRemoteTree(repository, branch, token)
-        val local = collectLocalFiles(workspace)
-        val changed = mutableListOf<String>()
-        val added = mutableListOf<String>()
-        local.forEach { (path, content) ->
-            val remoteFile = remote.files[path]
-            if (remoteFile == null) added += path
-            else if (gitBlobSha(content) != remoteFile.sha) changed += path
-        }
-        val deleted = remote.files.keys.filter { it !in local.keys }.sorted()
-        val unchanged = local.count { (path, content) -> remote.files[path]?.sha == gitBlobSha(content) }
-        GitHubSyncStatus(branch, remote.commitSha, changed.sorted(), added.sorted(), deleted, unchanged)
-    }
-
-    suspend fun fetch(repository: String, branch: String, token: String, workspace: Workspace): Int = withContext(Dispatchers.IO) {
-        val remote = loadRemoteTree(repository, branch, token)
-        var count = 0
-        remote.contents.keys.sorted().forEach { path ->
-            fileSystem.write(workspace, path, remote.contents.getValue(path), mimeTypeFor(path))
-            count++
-        }
-        count
-    }
-
-    suspend fun diff(repository: String, branch: String, token: String, workspace: Workspace): List<GitDiff> = withContext(Dispatchers.IO) {
-        val remote = loadRemoteTree(repository, branch, token)
-        val local = collectLocalFiles(workspace)
-        val result = mutableListOf<GitDiff>()
-        (local.keys + remote.contents.keys).distinct().sorted().forEach { path ->
-            val before = remote.contents[path].orEmpty()
-            val after = local[path].orEmpty()
-            if (before != after) {
-                val (added, removed) = lineStats(before, after)
-                result += GitDiff(path, before, after, added, removed)
-            }
-        }
-        result
-    }
-
-    suspend fun commitAndPush(repository: String, branch: String, token: String, workspace: Workspace, message: String, staged: Set<String>? = null): GitHubCommitResult = withContext(Dispatchers.IO) {
-        require(message.isNotBlank()) { "Commit message is required" }
-        val remote = loadRemoteTree(repository, branch, token)
-        val local = collectLocalFiles(workspace)
-        val allowed = staged ?: (local.keys + remote.contents.keys).toSet()
-        val entries = mutableListOf<JSONObject>()
-
-        allowed.sorted().forEach { path ->
-            if (path.startsWith(".git/")) return@forEach
-            val content = local[path]
-            if (content != null) {
-                entries += JSONObject().apply {
-                    put("path", path)
-                    put("mode", "100644")
-                    put("type", "blob")
-                    put("content", content)
-                }
-            } else if (remote.files.containsKey(path)) {
-                entries += JSONObject().apply {
-                    put("path", path)
-                    put("mode", "100644")
-                    put("type", "blob")
-                    put("sha", JSONObject.NULL)
-                }
-            }
-        }
-
-        (remote.files.keys - allowed).forEach { path ->
-            entries += JSONObject().apply {
-                put("path", path)
-                put("mode", "100644")
-                put("type", "blob")
-                put("sha", remote.files.getValue(path).sha)
-            }
-        }
-
-        val tree = apiJson("POST", "/repos/$repository/git/trees", token, JSONObject().apply {
-            put("base_tree", remote.treeSha)
-            put("tree", JSONArray(entries))
-        })
-        val treeSha = tree.getString("sha")
-        val commit = apiJson("POST", "/repos/$repository/git/commits", token, JSONObject().apply {
-            put("message", message.trim())
-            put("tree", treeSha)
-            put("parents", JSONArray().put(remote.commitSha))
-        })
-        val commitSha = commit.getString("sha")
-        apiJson("PATCH", "/repos/$repository/git/refs/heads/${encode(branch)}", token, JSONObject().put("sha", commitSha))
-        GitHubCommitResult(commitSha, treeSha, message.trim())
-    }
-
-    suspend fun repositories(token: String, query: String? = null, limit: Int = 50): List<GitHubRepository> = withContext(Dispatchers.IO) {
-        val path = if (query.isNullOrBlank()) "/user/repos?sort=updated&per_page=${limit.coerceIn(1, 100)}" else "/search/repositories?q=${encode(query)}&per_page=${limit.coerceIn(1, 100)}"
-        val root = apiJson("GET", path, token)
-        val items = root.getJSONArray("items")
-        (0 until items.length()).map { parseRepository(items.getJSONObject(it)) }
-    }
-
-    suspend fun repository(repository: String, token: String): GitHubRepository = withContext(Dispatchers.IO) {
-        parseRepository(apiJson("GET", "/repos/$repository", token))
-    }
-
-    suspend fun branches(repository: String, current: String, token: String): List<GitBranch> = withContext(Dispatchers.IO) {
-        val items = apiArray("GET", "/repos/$repository/branches?per_page=100", token)
-        (0 until items.length()).map { i ->
-            val o = items.getJSONObject(i)
-            GitBranch(o.getString("name"), o.getJSONObject("commit").getString("sha"), o.getString("name") == current)
-        }.sortedBy { it.name }
-    }
-
-    suspend fun createBranch(repository: String, name: String, fromSha: String, token: String) = withContext(Dispatchers.IO) {
-        require(name.matches(Regex("[A-Za-z0-9._/-]+"))) { "Invalid branch name" }
-        apiJson("POST", "/repos/$repository/git/refs", token, JSONObject().apply {
-            put("ref", "refs/heads/$name")
-            put("sha", fromSha)
-        })
-    }
-
-    suspend fun checkout(repository: String, branch: String, token: String): String = withContext(Dispatchers.IO) {
-        apiJson("GET", "/repos/$repository/git/ref/heads/${encode(branch)}", token).getJSONObject("object").getString("sha")
-    }
-
-    suspend fun log(repository: String, branch: String, token: String, limit: Int = 30): List<GitCommit> = withContext(Dispatchers.IO) {
-        val items = apiArray("GET", "/repos/$repository/commits?sha=${encode(branch)}&per_page=${limit.coerceIn(1, 100)}", token)
-        (0 until items.length()).map { i ->
-            val o = items.getJSONObject(i)
-            val commit = o.getJSONObject("commit")
-            val author = commit.optJSONObject("author")
-            val stats = o.optJSONObject("stats")
-            GitCommit(
-                o.getString("sha"),
-                commit.getString("message").lineSequence().first(),
-                author?.optString("name", "Unknown") ?: "Unknown",
-                author?.optString("date", "") ?: "",
-                stats?.optInt("total", 0) ?: 0
-            )
-        }
-    }
-
-    suspend fun workflows(repository: String, token: String): List<GitHubWorkflow> = withContext(Dispatchers.IO) {
-        val items = apiJson("GET", "/repos/$repository/actions/workflows?per_page=100", token).getJSONArray("workflows")
-        (0 until items.length()).map { i ->
-            val o = items.getJSONObject(i)
-            GitHubWorkflow(o.getLong("id"), o.getString("name"), o.getString("path"), o.getString("state"), o.optString("html_url").ifBlank { null })
-        }
-    }
-
-    suspend fun workflowRuns(repository: String, token: String, workflowId: Long? = null, branch: String? = null, limit: Int = 30): List<GitHubWorkflowRun> = withContext(Dispatchers.IO) {
-        val path = buildString {
-            append("/repos/$repository/actions/")
-            if (workflowId != null) append("workflows/$workflowId/")
-            append("runs?per_page=${limit.coerceIn(1, 100)}")
-            if (!branch.isNullOrBlank()) append("&branch=${encode(branch)}")
-        }
-        val items = apiJson("GET", path, token).getJSONArray("workflow_runs")
-        (0 until items.length()).map { parseRun(items.getJSONObject(it)) }
-    }
-
-    suspend fun dispatchWorkflow(repository: String, workflowId: Long, token: String, branch: String = "main", inputs: Map<String, String> = emptyMap()) = withContext(Dispatchers.IO) {
-        val body = JSONObject().apply {
-            put("ref", branch)
-            if (inputs.isNotEmpty()) put("inputs", JSONObject(inputs))
-        }
-        apiRequest("POST", "/repos/$repository/actions/workflows/$workflowId/dispatches", token, body)
-    }
-
-    suspend fun workflowRun(repository: String, runId: Long, token: String): GitHubWorkflowRun = withContext(Dispatchers.IO) {
-        parseRun(apiJson("GET", "/repos/$repository/actions/runs/$runId", token))
-    }
-
-    suspend fun artifacts(repository: String, token: String, runId: Long? = null, limit: Int = 50): List<GitHubArtifact> = withContext(Dispatchers.IO) {
-        val path = if (runId == null) "/repos/$repository/actions/artifacts?per_page=${limit.coerceIn(1, 100)}" else "/repos/$repository/actions/runs/$runId/artifacts?per_page=${limit.coerceIn(1, 100)}"
-        val items = apiJson("GET", path, token).getJSONArray("artifacts")
-        (0 until items.length()).map { i ->
-            val o = items.getJSONObject(i)
-            GitHubArtifact(o.getLong("id"), o.getString("name"), o.optLong("size_in_bytes"), o.optBoolean("expired"), o.optString("created_at"), o.optString("expires_at").ifBlank { null }, o.optString("archive_download_url").ifBlank { null })
-        }
-    }
-
+    suspend fun status(repository: String, branch: String, token: String, workspace: Workspace): GitHubSyncStatus = withContext(Dispatchers.IO) { val remote = loadRemoteTree(repository, branch, token); val local = collectLocalFiles(workspace); val changed = mutableListOf<String>(); val added = mutableListOf<String>(); local.forEach { (path, content) -> val remoteFile = remote.files[path]; if (remoteFile == null) added += path else if (gitBlobSha(content) != remoteFile.sha) changed += path }; val deleted = remote.files.keys.filter { it !in local.keys }.sorted(); val unchanged = local.count { (path, content) -> remote.files[path]?.sha == gitBlobSha(content) }; GitHubSyncStatus(branch, remote.commitSha, changed.sorted(), added.sorted(), deleted, unchanged) }
+    suspend fun fetch(repository: String, branch: String, token: String, workspace: Workspace): Int = withContext(Dispatchers.IO) { val remote = loadRemoteTree(repository, branch, token); var count = 0; remote.contents.keys.sorted().forEach { path -> fileSystem.write(workspace, path, remote.contents.getValue(path), mimeTypeFor(path)); count++ }; count }
+    suspend fun diff(repository: String, branch: String, token: String, workspace: Workspace): List<GitDiff> = withContext(Dispatchers.IO) { val remote = loadRemoteTree(repository, branch, token); val local = collectLocalFiles(workspace); val result = mutableListOf<GitDiff>(); (local.keys + remote.contents.keys).distinct().sorted().forEach { path -> val before = remote.contents[path].orEmpty(); val after = local[path].orEmpty(); if (before != after) { val (added, removed) = lineStats(before, after); result += GitDiff(path, before, after, added, removed) } }; result }
+    suspend fun commitAndPush(repository: String, branch: String, token: String, workspace: Workspace, message: String, staged: Set<String>? = null): GitHubCommitResult = withContext(Dispatchers.IO) { require(message.isNotBlank()) { "Commit message is required" }; val remote = loadRemoteTree(repository, branch, token); val local = collectLocalFiles(workspace); val allowed = staged ?: (local.keys + remote.contents.keys).toSet(); val entries = mutableListOf<JSONObject>(); allowed.sorted().forEach { path -> if (path.startsWith(".git/")) return@forEach; val content = local[path]; if (content != null) entries += JSONObject().apply { put("path", path); put("mode", "100644"); put("type", "blob"); put("content", content) } else if (remote.files.containsKey(path)) entries += JSONObject().apply { put("path", path); put("mode", "100644"); put("type", "blob"); put("sha", JSONObject.NULL) } }; (remote.files.keys - allowed).forEach { path -> entries += JSONObject().apply { put("path", path); put("mode", "100644"); put("type", "blob"); put("sha", remote.files.getValue(path).sha) } }; val tree = apiJson("POST", "/repos/$repository/git/trees", token, JSONObject().apply { put("base_tree", remote.treeSha); put("tree", JSONArray(entries)) }); val treeSha = tree.getString("sha"); val commit = apiJson("POST", "/repos/$repository/git/commits", token, JSONObject().apply { put("message", message.trim()); put("tree", treeSha); put("parents", JSONArray().put(remote.commitSha)) }); val commitSha = commit.getString("sha"); apiJson("PATCH", "/repos/$repository/git/refs/heads/${encode(branch)}", token, JSONObject().put("sha", commitSha)); GitHubCommitResult(commitSha, treeSha, message.trim()) }
+    suspend fun repositories(token: String, query: String? = null, limit: Int = 50): List<GitHubRepository> = withContext(Dispatchers.IO) { val path = if (query.isNullOrBlank()) "/user/repos?sort=updated&per_page=${limit.coerceIn(1, 100)}" else "/search/repositories?q=${encode(query)}&per_page=${limit.coerceIn(1, 100)}"; val items = apiJson("GET", path, token).getJSONArray("items"); (0 until items.length()).map { parseRepository(items.getJSONObject(it)) } }
+    suspend fun repository(repository: String, token: String): GitHubRepository = withContext(Dispatchers.IO) { parseRepository(apiJson("GET", "/repos/$repository", token)) }
+    suspend fun branches(repository: String, current: String, token: String): List<GitBranch> = withContext(Dispatchers.IO) { val items = apiArray("GET", "/repos/$repository/branches?per_page=100", token); (0 until items.length()).map { i -> val o = items.getJSONObject(i); GitBranch(o.getString("name"), o.getJSONObject("commit").getString("sha"), o.getString("name") == current) }.sortedBy { it.name } }
+    suspend fun createBranch(repository: String, name: String, fromSha: String, token: String) = withContext(Dispatchers.IO) { require(name.matches(Regex("[A-Za-z0-9._/-]+"))) { "Invalid branch name" }; apiJson("POST", "/repos/$repository/git/refs", token, JSONObject().apply { put("ref", "refs/heads/$name"); put("sha", fromSha) }) }
+    suspend fun checkout(repository: String, branch: String, token: String): String = withContext(Dispatchers.IO) { apiJson("GET", "/repos/$repository/git/ref/heads/${encode(branch)}", token).getJSONObject("object").getString("sha") }
+    suspend fun log(repository: String, branch: String, token: String, limit: Int = 30): List<GitCommit> = withContext(Dispatchers.IO) { val items = apiArray("GET", "/repos/$repository/commits?sha=${encode(branch)}&per_page=${limit.coerceIn(1, 100)}", token); (0 until items.length()).map { i -> val o = items.getJSONObject(i); val commit = o.getJSONObject("commit"); val author = commit.optJSONObject("author"); val stats = o.optJSONObject("stats"); GitCommit(o.getString("sha"), commit.getString("message").lineSequence().first(), author?.optString("name", "Unknown") ?: "Unknown", author?.optString("date", "") ?: "", stats?.optInt("total", 0) ?: 0) } }
+    suspend fun workflows(repository: String, token: String): List<GitHubWorkflow> = withContext(Dispatchers.IO) { val items = apiJson("GET", "/repos/$repository/actions/workflows?per_page=100", token).getJSONArray("workflows"); (0 until items.length()).map { i -> val o = items.getJSONObject(i); GitHubWorkflow(o.getLong("id"), o.getString("name"), o.getString("path"), o.getString("state"), o.optString("html_url").ifBlank { null }) } }
+    suspend fun workflowRuns(repository: String, token: String, workflowId: Long? = null, branch: String? = null, limit: Int = 30): List<GitHubWorkflowRun> = withContext(Dispatchers.IO) { val path = buildString { append("/repos/$repository/actions/"); if (workflowId != null) append("workflows/$workflowId/"); append("runs?per_page=${limit.coerceIn(1, 100)}"); if (!branch.isNullOrBlank()) append("&branch=${encode(branch)}") }; val items = apiJson("GET", path, token).getJSONArray("workflow_runs"); (0 until items.length()).map { parseRun(items.getJSONObject(it)) } }
+    suspend fun dispatchWorkflow(repository: String, workflowId: Long, token: String, branch: String = "main", inputs: Map<String, String> = emptyMap()) = withContext(Dispatchers.IO) { val body = JSONObject().apply { put("ref", branch); if (inputs.isNotEmpty()) put("inputs", JSONObject(inputs)) }; apiRequest("POST", "/repos/$repository/actions/workflows/$workflowId/dispatches", token, body) }
+    suspend fun workflowRun(repository: String, runId: Long, token: String): GitHubWorkflowRun = withContext(Dispatchers.IO) { parseRun(apiJson("GET", "/repos/$repository/actions/runs/$runId", token)) }
+    suspend fun workflowJobs(repository: String, runId: Long, token: String): List<GitHubWorkflowJob> = withContext(Dispatchers.IO) { val items = apiJson("GET", "/repos/$repository/actions/runs/$runId/jobs?per_page=100", token).getJSONArray("jobs"); (0 until items.length()).map { i -> val o = items.getJSONObject(i); GitHubWorkflowJob(o.getLong("id"), o.optString("name", "Job"), o.optString("status"), o.optString("conclusion").ifBlank { null }, o.optString("started_at"), o.optString("completed_at").ifBlank { null }, o.optString("html_url").ifBlank { null }) } }
+    suspend fun workflowJobLogs(repository: String, jobId: Long, token: String): String = withContext(Dispatchers.IO) { apiRequest("GET", "/repos/$repository/actions/jobs/$jobId/logs", token) }
+    suspend fun rerunFailedJobs(repository: String, runId: Long, token: String) = withContext(Dispatchers.IO) { apiRequest("POST", "/repos/$repository/actions/runs/$runId/rerun-failed-jobs", token); Unit }
+    suspend fun cancelWorkflowRun(repository: String, runId: Long, token: String) = withContext(Dispatchers.IO) { apiRequest("POST", "/repos/$repository/actions/runs/$runId/cancel", token); Unit }
+    suspend fun artifacts(repository: String, token: String, runId: Long? = null, limit: Int = 50): List<GitHubArtifact> = withContext(Dispatchers.IO) { val path = if (runId == null) "/repos/$repository/actions/artifacts?per_page=${limit.coerceIn(1, 100)}" else "/repos/$repository/actions/runs/$runId/artifacts?per_page=${limit.coerceIn(1, 100)}"; val items = apiJson("GET", path, token).getJSONArray("artifacts"); (0 until items.length()).map { i -> val o = items.getJSONObject(i); GitHubArtifact(o.getLong("id"), o.getString("name"), o.optLong("size_in_bytes"), o.optBoolean("expired"), o.optString("created_at"), o.optString("expires_at").ifBlank { null }, o.optString("archive_download_url").ifBlank { null }) } }
     private fun parseRepository(o: JSONObject) = GitHubRepository(o.getString("full_name"), o.optString("default_branch", "main"), o.optBoolean("private", false), o.optString("description").ifBlank { null })
-
     private fun parseRun(o: JSONObject) = GitHubWorkflowRun(o.getLong("id"), o.optString("name", "Workflow"), o.optString("status"), o.optString("conclusion").ifBlank { null }, o.optString("head_branch"), o.optString("head_sha"), o.optString("created_at"), o.optString("updated_at"), o.optString("html_url").ifBlank { null })
-
-    private suspend fun loadRemoteTree(repository: String, branch: String, token: String): RemoteTree {
-        val ref = apiJson("GET", "/repos/$repository/git/ref/heads/${encode(branch)}", token)
-        val commitSha = ref.getJSONObject("object").getString("sha")
-        val commit = apiJson("GET", "/repos/$repository/git/commits/$commitSha", token)
-        val treeSha = commit.getJSONObject("tree").getString("sha")
-        val tree = apiJson("GET", "/repos/$repository/git/trees/$treeSha?recursive=1", token)
-        val files = linkedMapOf<String, GitHubRemoteFile>()
-        val contents = linkedMapOf<String, String>()
-        val items = tree.optJSONArray("tree") ?: JSONArray()
-        for (i in 0 until items.length()) {
-            val item = items.getJSONObject(i)
-            if (item.optString("type") != "blob") continue
-            val path = item.getString("path")
-            if (path.startsWith(".git/")) continue
-            val sha = item.getString("sha")
-            val size = item.optLong("size", 0L)
-            files[path] = GitHubRemoteFile(path, sha, size)
-            if (size <= WorkspaceFileSystem.MAX_EDITABLE_FILE_BYTES) {
-                val blob = apiJson("GET", "/repos/$repository/git/blobs/$sha", token)
-                if (blob.optString("encoding") == "base64") {
-                    val bytes = Base64.decode(blob.getString("content").replace("\n", ""), Base64.DEFAULT)
-                    val text = bytes.toString(Charsets.UTF_8)
-                    if (text.toByteArray(Charsets.UTF_8).contentEquals(bytes)) contents[path] = text
-                }
-            }
-        }
-        return RemoteTree(commitSha, treeSha, files, contents)
-    }
-
-    private suspend fun collectLocalFiles(workspace: Workspace): Map<String, String> {
-        val result = linkedMapOf<String, String>()
-        suspend fun visit(directory: String) {
-            fileSystem.list(workspace, directory).forEach { entry ->
-                if (entry.name == ".git") return@forEach
-                if (entry.type == EntryType.DIRECTORY) visit(entry.relativePath)
-                else if (entry.sizeBytes <= WorkspaceFileSystem.MAX_EDITABLE_FILE_BYTES) {
-                    runCatching { fileSystem.read(workspace, entry.relativePath).content }
-                        .onSuccess { result[entry.relativePath] = it }
-                }
-            }
-        }
-        visit("")
-        return result
-    }
-
-    private fun gitBlobSha(content: String): String {
-        val bytes = content.toByteArray(Charsets.UTF_8)
-        val header = "blob ${bytes.size}\u0000".toByteArray(Charsets.UTF_8)
-        return MessageDigest.getInstance("SHA-1").digest(header + bytes).joinToString("") { "%02x".format(it) }
-    }
-
-    private fun lineStats(before: String, after: String): Pair<Int, Int> {
-        val oldLines = before.lines()
-        val newLines = after.lines()
-        var added = 0
-        var removed = 0
-        val count = maxOf(oldLines.size, newLines.size)
-        for (i in 0 until count) {
-            val oldLine = oldLines.getOrNull(i)
-            val newLine = newLines.getOrNull(i)
-            if (oldLine != newLine) {
-                if (newLine != null) added++
-                if (oldLine != null) removed++
-            }
-        }
-        return added to removed
-    }
-
+    private suspend fun loadRemoteTree(repository: String, branch: String, token: String): RemoteTree { val ref = apiJson("GET", "/repos/$repository/git/ref/heads/${encode(branch)}", token); val commitSha = ref.getJSONObject("object").getString("sha"); val commit = apiJson("GET", "/repos/$repository/git/commits/$commitSha", token); val treeSha = commit.getJSONObject("tree").getString("sha"); val tree = apiJson("GET", "/repos/$repository/git/trees/$treeSha?recursive=1", token); val files = linkedMapOf<String, GitHubRemoteFile>(); val contents = linkedMapOf<String, String>(); val items = tree.optJSONArray("tree") ?: JSONArray(); for (i in 0 until items.length()) { val item = items.getJSONObject(i); if (item.optString("type") != "blob") continue; val path = item.getString("path"); if (path.startsWith(".git/")) continue; val sha = item.getString("sha"); val size = item.optLong("size", 0L); files[path] = GitHubRemoteFile(path, sha, size); if (size <= WorkspaceFileSystem.MAX_EDITABLE_FILE_BYTES) { val blob = apiJson("GET", "/repos/$repository/git/blobs/$sha", token); if (blob.optString("encoding") == "base64") { val bytes = Base64.decode(blob.getString("content").replace("\n", ""), Base64.DEFAULT); val text = bytes.toString(Charsets.UTF_8); if (text.toByteArray(Charsets.UTF_8).contentEquals(bytes)) contents[path] = text } } }; return RemoteTree(commitSha, treeSha, files, contents) }
+    private suspend fun collectLocalFiles(workspace: Workspace): Map<String, String> { val result = linkedMapOf<String, String>(); suspend fun visit(directory: String) { fileSystem.list(workspace, directory).forEach { entry -> if (entry.name == ".git") return@forEach; if (entry.type == EntryType.DIRECTORY) visit(entry.relativePath) else if (entry.sizeBytes <= WorkspaceFileSystem.MAX_EDITABLE_FILE_BYTES) runCatching { fileSystem.read(workspace, entry.relativePath).content }.onSuccess { result[entry.relativePath] = it } } }; visit(""); return result }
+    private fun gitBlobSha(content: String): String { val bytes = content.toByteArray(Charsets.UTF_8); val header = "blob ${bytes.size}\u0000".toByteArray(Charsets.UTF_8); return MessageDigest.getInstance("SHA-1").digest(header + bytes).joinToString("") { "%02x".format(it) } }
+    private fun lineStats(before: String, after: String): Pair<Int, Int> { val oldLines = before.lines(); val newLines = after.lines(); var added = 0; var removed = 0; val count = maxOf(oldLines.size, newLines.size); for (i in 0 until count) { val oldLine = oldLines.getOrNull(i); val newLine = newLines.getOrNull(i); if (oldLine != newLine) { if (newLine != null) added++; if (oldLine != null) removed++ } }; return added to removed }
     private fun apiJson(method: String, path: String, token: String, body: JSONObject? = null): JSONObject = JSONObject(apiRequest(method, path, token, body))
-
     private fun apiArray(method: String, path: String, token: String): JSONArray = JSONArray(apiRequest(method, path, token, null))
-
-    private fun apiRequest(method: String, path: String, token: String, body: JSONObject? = null): String {
-        require(token.isNotBlank()) { "GitHub token is not configured. Add it in Settings > GitHub." }
-        val connection = (URL("https://api.github.com$path").openConnection() as HttpURLConnection).apply {
-            requestMethod = method
-            connectTimeout = 15_000
-            readTimeout = 30_000
-            setRequestProperty("Accept", "application/vnd.github+json")
-            setRequestProperty("Authorization", "Bearer $token")
-            setRequestProperty("X-GitHub-Api-Version", "2022-11-28")
-            setRequestProperty("User-Agent", "Nexus-Android")
-            if (body != null) {
-                doOutput = true
-                setRequestProperty("Content-Type", "application/json; charset=utf-8")
-            }
-        }
-        body?.toString()?.toByteArray(Charsets.UTF_8)?.let { bytes -> connection.outputStream.use { it.write(bytes) } }
-        val status = connection.responseCode
-        val stream = if (status in 200..299) connection.inputStream else connection.errorStream
-        val response = stream?.bufferedReader()?.use { it.readText() }.orEmpty()
-        connection.disconnect()
-        if (status !in 200..299) {
-            val message = runCatching { JSONObject(response).optString("message") }.getOrNull().orEmpty()
-            error("GitHub API $status${if (message.isNotBlank()) ": $message" else ""}")
-        }
-        return response
-    }
-
+    private fun apiRequest(method: String, path: String, token: String, body: JSONObject? = null): String { require(token.isNotBlank()) { "GitHub token is not configured. Add it in Settings > GitHub." }; val connection = (URL("https://api.github.com$path").openConnection() as HttpURLConnection).apply { requestMethod = method; connectTimeout = 15_000; readTimeout = 60_000; instanceFollowRedirects = true; setRequestProperty("Accept", "application/vnd.github+json"); setRequestProperty("Authorization", "Bearer $token"); setRequestProperty("X-GitHub-Api-Version", "2022-11-28"); setRequestProperty("User-Agent", "Nexus-Android"); if (body != null) { doOutput = true; setRequestProperty("Content-Type", "application/json; charset=utf-8") } }; body?.toString()?.toByteArray(Charsets.UTF_8)?.let { bytes -> connection.outputStream.use { it.write(bytes) } }; val status = connection.responseCode; val stream = if (status in 200..299) connection.inputStream else connection.errorStream; val response = stream?.bufferedReader()?.use { it.readText() }.orEmpty(); connection.disconnect(); if (status !in 200..299) { val message = runCatching { JSONObject(response).optString("message") }.getOrNull().orEmpty(); error("GitHub API $status${if (message.isNotBlank()) ": $message" else ""}") }; return response }
     private fun encode(value: String): String = URLEncoder.encode(value, Charsets.UTF_8.name()).replace("+", "%20")
-    private fun mimeTypeFor(path: String) = when (path.substringAfterLast('.', "").lowercase()) {
-        "json" -> "application/json"
-        "xml" -> "application/xml"
-        "html", "htm" -> "text/html"
-        "css" -> "text/css"
-        else -> "text/plain"
-    }
-
-    private data class RemoteTree(
-        val commitSha: String,
-        val treeSha: String,
-        val files: Map<String, GitHubRemoteFile>,
-        val contents: Map<String, String>
-    )
+    private fun mimeTypeFor(path: String) = when (path.substringAfterLast('.', "").lowercase()) { "json" -> "application/json"; "xml" -> "application/xml"; "html", "htm" -> "text/html"; "css" -> "text/css"; else -> "text/plain" }
+    private data class RemoteTree(val commitSha: String, val treeSha: String, val files: Map<String, GitHubRemoteFile>, val contents: Map<String, String>)
 }
