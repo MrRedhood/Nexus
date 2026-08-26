@@ -82,7 +82,7 @@
 - 🔄 Live logs
 - 🔄 Build history
 - 🔄 Artifact download/metadata
-- ⬜ Build failure intelligence
+- 🔄 Build failure intelligence
 
 ### 09 Build / Artifact System
 - ⬜ Build records
@@ -292,13 +292,13 @@
 - ✅ ChatGPT-style GitHub Actions build/details screen
 - ✅ GitHub workspace navigation links Releases and Actions
 - ✅ Rich Android artifact management: APK/AAB detection, build metadata, expiration, download/extraction, APK install and AAB sharing
+- ✅ Deterministic CI failure intelligence: ranked known failure signatures, contextual evidence, line numbers and no-fabrication unknown handling
 - 🔄 GitHub repository discovery and Actions build/artifact foundation
 
 ## Next priority
 
-1. ⬜ Build failure intelligence: extract actionable failures from failed CI jobs without fabricating diagnoses.
-2. ⬜ Complete remaining Git first-class operations: stash, merge/conflict resolution, reset/cherry-pick.
-3. ⬜ Complete AI tool permissions + patch/snapshot/rollback.
-4. ⬜ Complete task/coding/debug agents.
+1. ⬜ Complete remaining Git first-class operations: stash, merge/conflict resolution, reset/cherry-pick.
+2. ⬜ Complete AI tool permissions + patch/snapshot/rollback.
+3. ⬜ Complete task/coding/debug agents.
 
-_Last updated: 2026-08-26 — Rich APK/AAB artifact management verified by Android CI #282 (run 32939111689)._
+_Last updated: 2026-08-26 — CI failure intelligence verified by Android CI after commit 61785924f46ba481dea8ae9ebb88e6028585bd3f._
