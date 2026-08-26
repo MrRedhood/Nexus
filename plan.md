@@ -36,7 +36,7 @@
 
 ### 04 Editor
 - ⬜ Full mobile code editor
-- ⬜ Syntax highlighting
+- ✅ Syntax highlighting for supported languages
 - ⬜ Tabs/file tree
 - ⬜ Search/replace
 - ⬜ Undo/redo
@@ -100,12 +100,12 @@
 - ⬜ Artifact retention/management
 
 ### 10 Terminal
-- 🔄 Terminal entry/UI
-- ⬜ Persistent sessions
-- ⬜ Command input/output streaming
-- ⬜ Command history
-- ⬜ Cancellation
-- ⬜ Local/remote/CI provider abstraction
+- ✅ Terminal entry/UI
+- ✅ Persistent sessions
+- ✅ Command input/output streaming
+- ✅ Command history
+- ✅ Cancellation
+- ✅ Local/remote/CI provider abstraction
 
 ### 11 Tests / Diagnostics
 - ⬜ Test discovery
@@ -280,16 +280,17 @@
 - ✅ GitHub token storage and GitHub sync foundation
 - ✅ Unsupported GitHub file-type protection
 - ✅ Terminal entry foundation
+- ✅ Terminal sessions, history and cancellation stabilization
 - ✅ Nexus app logo integration
 - ✅ Settings simplification and model selector consolidation
+- ✅ Editor syntax highlighting for supported programming languages
 
 ## Next priority
 
-1. 🔄 Stabilize and complete the Terminal layer.
-2. ⬜ Complete Git first-class operations.
-3. ⬜ Complete GitHub connector/Actions operations.
-4. ⬜ Build cloud APK/AAB pipeline.
-5. ⬜ Complete AI tool permissions + patch/snapshot/rollback.
-6. ⬜ Complete task/coding/debug agents.
+1. ⬜ Complete Git first-class operations.
+2. ⬜ Complete GitHub connector/Actions operations.
+3. ⬜ Build cloud APK/AAB pipeline.
+4. ⬜ Complete AI tool permissions + patch/snapshot/rollback.
+5. ⬜ Complete task/coding/debug agents.
 
 _Last updated: 2026-08-26_
