@@ -27,19 +27,32 @@ import com.mrredhood.nexus.core.model.NexusProject
 import com.mrredhood.nexus.core.settings.ApiKeyStore
 import com.mrredhood.nexus.core.workspace.GitBranch
 import com.mrredhood.nexus.core.workspace.GitHubAdvancedGitService
+import com.mrredhood.nexus.core.workspace.GitHubRepositoryService
+import com.mrredhood.nexus.core.workspace.Workspace
+import com.mrredhood.nexus.core.workspace.WorkspaceFileSystem
 import kotlinx.coroutines.launch
 
 @Composable
-fun GitAdvancedOperationsDialog(project: NexusProject, branch: String, branches: List<GitBranch>, onClose: () -> Unit, onChanged: () -> Unit) {
+fun GitAdvancedOperationsDialog(
+    project: NexusProject,
+    workspace: Workspace,
+    branch: String,
+    branches: List<GitBranch>,
+    onClose: () -> Unit,
+    onChanged: () -> Unit
+) {
     val context = LocalContext.current
     val tokenStore = remember { ApiKeyStore(context) }
+    val fileSystem = remember { WorkspaceFileSystem(context) }
+    val repositoryService = remember { GitHubRepositoryService(fileSystem) }
     val service = remember { GitHubAdvancedGitService() }
     val scope = rememberCoroutineScope()
     val repository = project.repository.orEmpty()
     var baseBranch by remember(branch) { mutableStateOf(branch) }
-    var headBranch by remember(branch, branches) { mutableStateOf(branches.firstOrNull { it.name != branch }?.name.orEmpty()) }
+    var headBranch by remember(branch, branches) { mutableStateOf(branches.firstOrNull { it.name != branch && !it.name.startsWith("nexus/stash/") }?.name.orEmpty()) }
     var commitSha by remember { mutableStateOf("") }
     var resetSha by remember { mutableStateOf("") }
+    var stashName by remember { mutableStateOf("nexus/stash/${System.currentTimeMillis()}") }
     var loading by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     var result by remember { mutableStateOf<String?>(null) }
@@ -64,6 +77,39 @@ fun GitAdvancedOperationsDialog(project: NexusProject, branch: String, branches:
         title = { Text("Advanced Git") },
         text = {
             LazyColumn(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                item {
+                    Text("Stash", style = MaterialTheme.typography.titleMedium)
+                    Text("Nexus stores a stash as a temporary cloud branch so it survives app restarts. It is not a local .git stash.", style = MaterialTheme.typography.bodySmall)
+                    OutlinedTextField(stashName, { stashName = it }, label = { Text("Stash name") }, singleLine = true, modifier = Modifier.fillMaxWidth().padding(top = 8.dp))
+                    Button(enabled = !loading && stashName.startsWith("nexus/stash/"), onClick = {
+                        run { token ->
+                            val name = service.createStashBranch(repository, branch, token, stashName.trim())
+                            val status = repositoryService.status(repository, branch, token, workspace)
+                            val paths = (status.changed + status.added + status.deleted).toSet()
+                            require(paths.isNotEmpty()) { "Working tree is clean; there is nothing to stash." }
+                            repositoryService.commitAndPush(repository, name, token, workspace, "Nexus stash: $name")
+                            "Stashed ${paths.size} changed path${if (paths.size == 1) "" else "s"} as $name"
+                        }
+                    }, modifier = Modifier.padding(top = 8.dp)) { Text("Create stash") }
+                    val stashes = branches.filter { it.name.startsWith("nexus/stash/") }
+                    if (stashes.isNotEmpty()) {
+                        Text("Existing stashes", style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(top = 10.dp))
+                        stashes.forEach { stash ->
+                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Text(stash.name.removePrefix("nexus/stash/"), modifier = Modifier.weight(1f))
+                                TextButton(enabled = !loading, onClick = {
+                                    run { token ->
+                                        val count = repositoryService.fetch(repository, stash.name, token, workspace)
+                                        "Applied ${stash.name} ($count files)"
+                                    }
+                                }) { Text("Apply") }
+                                TextButton(enabled = !loading, onClick = {
+                                    run { token -> service.dropStash(repository, stash.name, token); "Dropped ${stash.name}" }
+                                }) { Text("Drop") }
+                            }
+                        }
+                    }
+                }
                 item {
                     Text("Merge branches", style = MaterialTheme.typography.titleMedium)
                     Text("Merge the selected head into the base branch using GitHub's merge API.", style = MaterialTheme.typography.bodySmall)
