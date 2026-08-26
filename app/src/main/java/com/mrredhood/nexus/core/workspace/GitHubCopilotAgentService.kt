@@ -8,7 +8,7 @@ import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
 
-/** Real GitHub Copilot cloud-agent client. Authentication is the user's stored GitHub token. */
+/** Real GitHub Copilot cloud-agent client. Authentication and Copilot entitlement come from the user's GitHub token/account. */
 data class CopilotAgentTask(
     val id: String,
     val name: String,
@@ -48,6 +48,8 @@ class GitHubCopilotAgentService {
             put("prompt", prompt.trim())
             put("base_ref", baseRef.ifBlank { "main" })
             headRef?.takeIf { it.isNotBlank() }?.let { put("head_ref", it) }
+            // Omitting model is intentional: GitHub then applies Auto model selection
+            // according to the user's Copilot plan and organization/enterprise policy.
             model?.takeIf { it.isNotBlank() && it != AUTO_MODEL }?.let { put("model", it) }
             put("create_pull_request", createPullRequest)
         }
@@ -128,7 +130,7 @@ class GitHubCopilotAgentService {
                 throw IllegalStateException(
                     when {
                         status == 403 && message.isNotBlank() -> "GitHub denied Copilot access: $message"
-                        status == 403 -> "GitHub denied Copilot access. The token needs Agent tasks read/write permission and the account needs an eligible Copilot plan."
+                        status == 403 -> "GitHub denied Copilot access. Check the token's Agent tasks permission and the account's Copilot entitlement."
                         status == 404 -> "Copilot cloud-agent endpoint or repository was not found. Check the repository and Copilot availability."
                         status == 422 && message.isNotBlank() -> "GitHub rejected the Copilot task: $message"
                         message.isNotBlank() -> "GitHub API error ($status): $message"
@@ -146,13 +148,15 @@ class GitHubCopilotAgentService {
 
     companion object {
         const val AUTO_MODEL = "Auto"
+        // These are the model values currently accepted by the Agent Tasks API.
+        // GitHub remains authoritative: availability can vary by plan and org/enterprise policy.
         val SUPPORTED_MODELS = listOf(
             AUTO_MODEL,
-            "gpt-5.4",
-            "gpt-5.3-codex",
-            "gpt-5.2-codex",
             "claude-sonnet-4.6",
             "claude-opus-4.6",
+            "gpt-5.2-codex",
+            "gpt-5.3-codex",
+            "gpt-5.4",
             "claude-sonnet-4.5",
             "claude-opus-4.5"
         )
