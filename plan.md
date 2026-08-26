@@ -72,7 +72,7 @@
 - ⬜ GitHub App architecture with granular permissions
 - 🔄 Repository list/search/connect/create/fork
 - 🔄 Branch operations
-- ⬜ Pull requests
+- 🔄 Pull requests
 - ⬜ Issues
 - 🔄 Actions
 - ⬜ Checks
@@ -196,7 +196,8 @@
 - ⬜ Global user preferences
 
 ### 21 GitHub Engineering
-- ⬜ PR creation/review/comments/merge/close
+- 🔄 PR creation/listing/detail/diff/merge/close
+- ⬜ PR review/comments/approval workflow
 - ⬜ Issue creation/edit/comment/close
 - ⬜ Release creation
 - ⬜ Changelog generation
@@ -287,12 +288,14 @@
 - ✅ Git status/diff/stage/unstage/commit/change-summary operations
 - ✅ Git branch listing and safe workspace checkout
 - ✅ Git commit history/log
+- ✅ GitHub pull request service: list, detail, changed files/diff, create, close, merge
+- ✅ GitHub Pull Request management UI
 - 🔄 GitHub repository discovery and Actions foundation
 
 ## Next priority
 
 1. ⬜ Complete remaining Git first-class operations: stash, merge/conflict resolution, reset/cherry-pick.
-2. 🔄 Complete GitHub connector/Actions operations, starting with Pull Requests.
+2. 🔄 Complete GitHub Engineering: PR review/comments/approval, then Issues.
 3. ⬜ Build cloud APK/AAB pipeline.
 4. ⬜ Complete AI tool permissions + patch/snapshot/rollback.
 5. ⬜ Complete task/coding/debug agents.
