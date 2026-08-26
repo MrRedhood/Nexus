@@ -293,15 +293,16 @@
 - ✅ ChatGPT-style GitHub Checks screen with live repository data and GitHub links
 - ✅ GitHub issue service: list, detail, comments, create, update, close/reopen, labels, assignees
 - ✅ ChatGPT-style GitHub Issues management UI
+- ✅ GitHub Releases REST service: list/detail/create/edit/publish/delete and release-asset upload support
+- ✅ ChatGPT-style GitHub Releases screen: release list/detail, draft/pre-release state, notes, tags and asset links
 - 🔄 GitHub repository discovery and Actions build/artifact foundation
 
 ## Next priority
 
-1. 🔄 GitHub Releases: list, detail, draft/create, edit, publish, delete, tags, notes, prerelease, assets.
-2. 🔄 Actions run details: jobs, status/conclusion, duration, logs, rerun and build→commit→artifact linking.
-3. ⬜ Build failure intelligence and richer APK/AAB artifact management.
-4. ⬜ Complete remaining Git first-class operations: stash, merge/conflict resolution, reset/cherry-pick.
-5. ⬜ Complete AI tool permissions + patch/snapshot/rollback.
-6. ⬜ Complete task/coding/debug agents.
+1. 🔄 Integrate Releases into the GitHub workspace and complete Actions run details: jobs, status/conclusion, duration, logs, rerun and build→commit→artifact linking.
+2. ⬜ Build failure intelligence and richer APK/AAB artifact management.
+3. ⬜ Complete remaining Git first-class operations: stash, merge/conflict resolution, reset/cherry-pick.
+4. ⬜ Complete AI tool permissions + patch/snapshot/rollback.
+5. ⬜ Complete task/coding/debug agents.
 
-_Last updated: 2026-08-26 — GitHub Issues milestone recorded after CI #260 passed._
+_Last updated: 2026-08-26 — GitHub Releases service/screen verified by Android CI #265 (run 32934108035)._
