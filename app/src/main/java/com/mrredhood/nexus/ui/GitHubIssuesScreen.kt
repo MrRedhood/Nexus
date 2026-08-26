@@ -15,6 +15,8 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.ArrowBack
+import androidx.compose.material.icons.outlined.Delete
+import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.OpenInNew
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.Send
@@ -67,7 +69,12 @@ fun GitHubIssuesScreen(project: NexusProject, onBack: () -> Unit) {
     var composer by remember { mutableStateOf("") }
     var createTitle by remember { mutableStateOf("") }
     var createBody by remember { mutableStateOf("") }
+    var editTitle by remember { mutableStateOf("") }
+    var editBody by remember { mutableStateOf("") }
+    var editLabels by remember { mutableStateOf("") }
+    var editAssignees by remember { mutableStateOf("") }
     var showCreate by remember { mutableStateOf(false) }
+    var showEdit by remember { mutableStateOf(false) }
     var loading by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     var sending by remember { mutableStateOf(false) }
@@ -112,6 +119,37 @@ fun GitHubIssuesScreen(project: NexusProject, onBack: () -> Unit) {
         }
     }
 
+    fun beginEdit(issue: GitHubIssue) {
+        editTitle = issue.title
+        editBody = issue.body
+        editLabels = issue.labels.joinToString(", ")
+        editAssignees = issue.assignees.joinToString(", ")
+        showEdit = true
+    }
+
+    fun saveEdit(issue: GitHubIssue) {
+        val accessToken = token() ?: return
+        scope.launch {
+            sending = true; error = null
+            runCatching {
+                service.update(
+                    repository,
+                    issue.number,
+                    accessToken,
+                    title = editTitle,
+                    body = editBody,
+                    labels = editLabels.split(',').map { it.trim() }.filter { it.isNotBlank() },
+                    assignees = editAssignees.split(',').map { it.trim() }.filter { it.isNotBlank() }
+                )
+            }.onSuccess { updated ->
+                selected = updated
+                issues = issues.map { if (it.number == updated.number) updated else it }
+                showEdit = false
+            }.onFailure { error = it.message ?: "Could not update the issue." }
+            sending = false
+        }
+    }
+
     LaunchedEffect(repository, state) { load() }
     BackHandler(onBack = onBack)
 
@@ -120,9 +158,7 @@ fun GitHubIssuesScreen(project: NexusProject, onBack: () -> Unit) {
             TopAppBar(
                 title = { Text("Issues") },
                 navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.Outlined.ArrowBack, "Back") } },
-                actions = {
-                    IconButton(onClick = ::load, enabled = !loading) { Icon(Icons.Outlined.Refresh, "Refresh") }
-                }
+                actions = { IconButton(onClick = ::load, enabled = !loading) { Icon(Icons.Outlined.Refresh, "Refresh") } }
             )
         }
     ) { padding ->
@@ -131,7 +167,7 @@ fun GitHubIssuesScreen(project: NexusProject, onBack: () -> Unit) {
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     Text("GitHub Issues", style = MaterialTheme.typography.titleLarge)
                     Text(repository.ifBlank { "No repository connected" }, style = MaterialTheme.typography.bodyMedium)
-                    Text("Live data from GitHub. Creating, editing, closing, and commenting use the connected account's repository permissions.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("Live repository issues with create, edit, close, reopen, labels, assignees, and comments.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -153,6 +189,7 @@ fun GitHubIssuesScreen(project: NexusProject, onBack: () -> Unit) {
                             Text("#${issue.number} ${issue.title}", style = MaterialTheme.typography.titleMedium)
                             Text("${issue.author} · ${issue.comments} comments · ${issue.state}", style = MaterialTheme.typography.bodySmall)
                             if (issue.labels.isNotEmpty()) Text(issue.labels.joinToString(" · "), style = MaterialTheme.typography.labelMedium)
+                            if (issue.assignees.isNotEmpty()) Text("Assigned: ${issue.assignees.joinToString()}", style = MaterialTheme.typography.labelMedium)
                             if (issue.body.isNotBlank()) Text(issue.body.trim(), maxLines = 3, style = MaterialTheme.typography.bodySmall)
                         }
                     }
@@ -187,14 +224,33 @@ fun GitHubIssuesScreen(project: NexusProject, onBack: () -> Unit) {
         )
     }
 
+    if (showEdit) {
+        val issue = selected
+        if (issue != null) {
+            AlertDialog(
+                onDismissRequest = { if (!sending) showEdit = false },
+                title = { Text("Edit #${issue.number}") },
+                text = { Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    OutlinedTextField(editTitle, { editTitle = it }, label = { Text("Title") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                    OutlinedTextField(editBody, { editBody = it }, label = { Text("Description") }, minLines = 5, modifier = Modifier.fillMaxWidth())
+                    OutlinedTextField(editLabels, { editLabels = it }, label = { Text("Labels (comma separated)") }, modifier = Modifier.fillMaxWidth())
+                    OutlinedTextField(editAssignees, { editAssignees = it }, label = { Text("Assignees (GitHub usernames)") }, modifier = Modifier.fillMaxWidth())
+                } },
+                confirmButton = { TextButton(enabled = editTitle.isNotBlank() && !sending, onClick = { saveEdit(issue) }) { Text("Save") } },
+                dismissButton = { TextButton(enabled = !sending, onClick = { showEdit = false }) { Text("Cancel") } }
+            )
+        }
+    }
+
     selected?.let { issue ->
         AlertDialog(
             onDismissRequest = { selected = null },
             title = { Text("#${issue.number} ${issue.title}") },
             text = { Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("${issue.author} · ${issue.state}", style = MaterialTheme.typography.labelMedium)
-                if (issue.body.isNotBlank()) Text(issue.body)
                 if (issue.labels.isNotEmpty()) Text("Labels: ${issue.labels.joinToString()}", style = MaterialTheme.typography.bodySmall)
+                if (issue.assignees.isNotEmpty()) Text("Assignees: ${issue.assignees.joinToString()}", style = MaterialTheme.typography.bodySmall)
+                if (issue.body.isNotBlank()) Text(issue.body)
                 Text("Conversation", style = MaterialTheme.typography.titleMedium)
                 LazyColumn(Modifier.height(220.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     items(comments, key = { it.id }) { comment ->
@@ -205,6 +261,7 @@ fun GitHubIssuesScreen(project: NexusProject, onBack: () -> Unit) {
             } },
             confirmButton = {
                 Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    TextButton(enabled = !sending, onClick = { beginEdit(issue) }) { Icon(Icons.Outlined.Edit, null); Text("Edit") }
                     if (issue.state == "open") TextButton(enabled = !sending, onClick = {
                         val accessToken = token() ?: return@TextButton
                         scope.launch {
@@ -214,7 +271,16 @@ fun GitHubIssuesScreen(project: NexusProject, onBack: () -> Unit) {
                                 .onFailure { error = it.message }
                             sending = false
                         }
-                    }) { Text("Close") }
+                    }) { Text("Close") } else TextButton(enabled = !sending, onClick = {
+                        val accessToken = token() ?: return@TextButton
+                        scope.launch {
+                            sending = true
+                            runCatching { service.update(repository, issue.number, accessToken, state = "open") }
+                                .onSuccess { updated -> selected = updated; load() }
+                                .onFailure { error = it.message }
+                            sending = false
+                        }
+                    }) { Text("Reopen") }
                     issue.htmlUrl?.let { url -> TextButton(onClick = { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) }) { Icon(Icons.Outlined.OpenInNew, null); Text("Open") } }
                     TextButton(enabled = composer.isNotBlank() && !sending, onClick = ::sendComment) { Text("Send") }
                 }
