@@ -40,10 +40,13 @@ object GitHubFailureAnalyzer {
             val line = rawLine.trim()
             if (line.isBlank()) continue
             val rule = rules.firstOrNull { it.pattern.containsMatchIn(line) } ?: continue
-            matches += GitHubFailureFinding(rule.category, rule.message, line.take(500), index + 1)
+            val context = lines.subList(maxOf(0, index - 1), minOf(lines.size, index + 2))
+                .joinToString(" ") { it.trim() }
+                .take(700)
+            matches += GitHubFailureFinding(rule.category, rule.message, context, index + 1)
         }
         return matches
-            .distinctBy { "${it.category}|${it.evidence}" }
+            .distinctBy { "${it.category}|${it.lineNumber}|${it.evidence}" }
             .sortedWith(compareByDescending<GitHubFailureFinding> { priorities[it.category] ?: 0 }.thenBy { it.lineNumber ?: Int.MAX_VALUE })
             .take(maxFindings)
             .map { it.copy(confidence = if (it.category == "Gradle") "medium" else "high") }
