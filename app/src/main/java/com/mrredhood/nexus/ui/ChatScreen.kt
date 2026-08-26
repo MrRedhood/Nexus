@@ -48,6 +48,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -60,10 +61,13 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.mrredhood.nexus.core.ai.ChatContext
 import com.mrredhood.nexus.core.ai.ChatContextStore
 import com.mrredhood.nexus.core.ai.NexusActionExecutionRegistry
+import com.mrredhood.nexus.core.ai.NexusActionReview
 import com.mrredhood.nexus.core.ai.NexusActionStatus
 import com.mrredhood.nexus.core.ai.NexusActionProposal
+import com.mrredhood.nexus.core.ai.NexusDiffKind
 import com.mrredhood.nexus.core.model.NexusProject
 import com.mrredhood.nexus.core.workspace.Workspace
+import kotlinx.coroutines.launch
 
 private val NEXUS_COMMANDS = listOf("/explain", "/fix", "/refactor", "/optimize", "/test", "/build", "/search", "/open")
 
@@ -76,6 +80,7 @@ fun ChatScreen(project: NexusProject, workspace: Workspace, context: ChatContext
     val error by vm.error.collectAsStateWithLifecycle()
     val usage by vm.tokenUsage.collectAsStateWithLifecycle()
     val proposals by vm.actionProposals.collectAsStateWithLifecycle()
+    val reviews by vm.actionReviews.collectAsStateWithLifecycle()
     val executions by NexusActionExecutionRegistry.executions.collectAsStateWithLifecycle()
     val models by settingsVm.models.collectAsStateWithLifecycle()
     val featureSettings by settingsVm.settings.collectAsStateWithLifecycle()
@@ -137,7 +142,12 @@ fun ChatScreen(project: NexusProject, workspace: Workspace, context: ChatContext
                         }
                     }
                 }
-                if (proposals.isNotEmpty()) item { Column(Modifier.fillMaxWidth().widthIn(max = 820.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) { Text("Nexus actions", style = MaterialTheme.typography.titleMedium); proposals.forEach { proposal -> ActionRow(proposal, executions[proposal.id], vm::approveAction, vm::rejectAction) } } }
+                if (proposals.isNotEmpty()) item {
+                    Column(Modifier.fillMaxWidth().widthIn(max = 820.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("Nexus actions", style = MaterialTheme.typography.titleMedium)
+                        proposals.forEach { proposal -> ActionRow(proposal, reviews[proposal.id], executions[proposal.id], workspace, vm::approveAction, vm::rejectAction) }
+                    }
+                }
                 error?.let { message -> item { Text(message, color = MaterialTheme.colorScheme.error) } }
             }
             Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp)) {
@@ -184,25 +194,72 @@ private fun NexusWorkingIndicator() {
 }
 
 @Composable
-private fun ActionRow(proposal: NexusActionProposal, execution: com.mrredhood.nexus.core.ai.NexusActionExecutionSummary?, onApprove: (String) -> Unit, onReject: (String) -> Unit) {
+private fun ActionRow(
+    proposal: NexusActionProposal,
+    review: NexusActionReview?,
+    execution: com.mrredhood.nexus.core.ai.NexusActionExecutionSummary?,
+    workspace: Workspace,
+    onApprove: (String) -> Unit,
+    onReject: (String) -> Unit
+) {
     val action = proposal.action
+    val scope = rememberCoroutineScope()
+    var showReview by remember(proposal.id) { mutableStateOf(false) }
+    var rollingBack by remember(proposal.id) { mutableStateOf(false) }
+    var rolledBack by remember(proposal.id) { mutableStateOf(false) }
+
     Card(Modifier.fillMaxWidth(), shape = MaterialTheme.shapes.large) {
-        Row(Modifier.fillMaxWidth().padding(13.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            Column(Modifier.weight(1f)) {
-                Text(action.type.replace('_', ' ').replaceFirstChar { it.uppercase() }, style = MaterialTheme.typography.titleSmall)
-                action.path?.let { Text(it, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis) }
-                execution?.let { Text(if (it.success) "Applied" else "Failed", style = MaterialTheme.typography.labelSmall, color = if (it.success) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error) }
-            }
-            when (proposal.status) {
-                NexusActionStatus.PROPOSED, NexusActionStatus.APPROVED -> {
-                    Surface(onClick = { onApprove(proposal.id) }, shape = RoundedCornerShape(12.dp), color = MaterialTheme.colorScheme.primaryContainer) { Text("Apply", Modifier.padding(horizontal = 11.dp, vertical = 7.dp)) }
-                    Surface(onClick = { onReject(proposal.id) }, shape = RoundedCornerShape(12.dp), color = MaterialTheme.colorScheme.surfaceVariant) { Text("Reject", Modifier.padding(horizontal = 11.dp, vertical = 7.dp)) }
+        Column(Modifier.fillMaxWidth().padding(13.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Column(Modifier.weight(1f)) {
+                    Text(action.type.replace('_', ' ').replaceFirstChar { it.uppercase() }, style = MaterialTheme.typography.titleSmall)
+                    action.path?.let { Text(it, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis) }
+                    review?.let { Text("Change · +${it.additions} -${it.deletions}", style = MaterialTheme.typography.labelSmall) }
+                    execution?.let { Text(it.message, style = MaterialTheme.typography.labelSmall, color = if (it.success) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error, maxLines = 2, overflow = TextOverflow.Ellipsis) }
                 }
-                NexusActionStatus.EXECUTING -> Text("Applying…", style = MaterialTheme.typography.labelMedium)
-                NexusActionStatus.COMPLETED -> Text("Done", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
-                NexusActionStatus.FAILED -> Text("Failed", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.error)
-                NexusActionStatus.REJECTED -> Text("Rejected", style = MaterialTheme.typography.labelMedium)
+                when (proposal.status) {
+                    NexusActionStatus.PROPOSED, NexusActionStatus.APPROVED -> {
+                        Surface(onClick = { onApprove(proposal.id) }, shape = RoundedCornerShape(12.dp), color = MaterialTheme.colorScheme.primaryContainer) { Text("Apply", Modifier.padding(horizontal = 11.dp, vertical = 7.dp)) }
+                        Surface(onClick = { onReject(proposal.id) }, shape = RoundedCornerShape(12.dp), color = MaterialTheme.colorScheme.surfaceVariant) { Text("Reject", Modifier.padding(horizontal = 11.dp, vertical = 7.dp)) }
+                    }
+                    NexusActionStatus.EXECUTING -> Text("Applying…", style = MaterialTheme.typography.labelMedium)
+                    NexusActionStatus.COMPLETED -> Text("Done", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+                    NexusActionStatus.FAILED -> Text("Failed", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.error)
+                    NexusActionStatus.REJECTED -> Text("Rejected", style = MaterialTheme.typography.labelMedium)
+                }
             }
+            if (review != null && review.diff.isNotEmpty()) {
+                Surface(onClick = { showReview = !showReview }, shape = RoundedCornerShape(12.dp), color = MaterialTheme.colorScheme.surfaceVariant) {
+                    Text(if (showReview) "Hide patch preview" else "Review patch", Modifier.padding(horizontal = 11.dp, vertical = 8.dp), style = MaterialTheme.typography.labelMedium)
+                }
+                if (showReview) {
+                    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        review.diff.take(80).forEach { line ->
+                            val prefix = when (line.kind) { NexusDiffKind.ADD -> "+"; NexusDiffKind.REMOVE -> "-"; NexusDiffKind.CONTEXT -> " " }
+                            Text("$prefix${line.text}", style = MaterialTheme.typography.bodySmall, color = when (line.kind) { NexusDiffKind.ADD -> MaterialTheme.colorScheme.primary; NexusDiffKind.REMOVE -> MaterialTheme.colorScheme.error; NexusDiffKind.CONTEXT -> MaterialTheme.colorScheme.onSurfaceVariant })
+                        }
+                        if (review.diff.size > 80) Text("Showing first 80 changed/context lines.", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+            }
+            if (execution?.canRollback == true && !rolledBack) {
+                Surface(
+                    onClick = {
+                        if (rollingBack) return@Surface
+                        rollingBack = true
+                        scope.launch {
+                            rolledBack = NexusActionExecutionRegistry.rollback(workspace, proposal.id)
+                            rollingBack = false
+                        }
+                    },
+                    enabled = !rollingBack,
+                    shape = RoundedCornerShape(12.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant
+                ) {
+                    Text(if (rollingBack) "Rolling back…" else "Rollback change", Modifier.padding(horizontal = 11.dp, vertical = 8.dp), style = MaterialTheme.typography.labelMedium)
+                }
+            }
+            if (rolledBack) Text("Rolled back successfully.", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
         }
     }
 }
