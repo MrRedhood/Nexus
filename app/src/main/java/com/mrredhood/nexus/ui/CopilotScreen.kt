@@ -158,7 +158,7 @@ fun CopilotScreen(project: NexusProject, onBack: () -> Unit) {
                     Text("Copilot agent", style = MaterialTheme.typography.titleLarge)
                     Text(repository.ifBlank { "No GitHub repository connected" })
                     Text(
-                        "Real cloud-agent tasks can research, plan, edit code, run checks, push branches and create pull requests.",
+                        "Uses the Copilot entitlement, credits, model policies, and organization controls of the signed-in GitHub account. Nexus does not create a separate Copilot subscription.",
                         style = MaterialTheme.typography.bodySmall,
                         modifier = Modifier.padding(top = 6.dp)
                     )
@@ -179,6 +179,13 @@ fun CopilotScreen(project: NexusProject, onBack: () -> Unit) {
                 }
             }
 
+            Text(
+                if (model == GitHubCopilotAgentService.AUTO_MODEL) "Model: GitHub Auto selection uses the account's Copilot plan and organization/enterprise policy."
+                else "Model availability is controlled by the account's Copilot plan and organization/enterprise policy; GitHub remains authoritative.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+
             Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
                 Checkbox(checked = createPullRequest, onCheckedChange = { createPullRequest = it })
                 Text("Create a pull request when the task finishes")
@@ -188,12 +195,7 @@ fun CopilotScreen(project: NexusProject, onBack: () -> Unit) {
                 modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
                 horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
-                listOf(
-                    "Research",
-                    "Plan",
-                    "Review",
-                    "Fix tests"
-                ).forEach { preset ->
+                listOf("Research", "Plan", "Review", "Fix tests").forEach { preset ->
                     FilledTonalButton(onClick = {
                         prompt = when (preset) {
                             "Research" -> "Research this repository and explain the architecture, important files, risks, and recommended next steps."
