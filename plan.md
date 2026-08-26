@@ -51,9 +51,9 @@
 - ✅ Commit
 - ✅ Branch/checkout
 - ✅ Log
-- ⬜ Stash
-- ⬜ Merge/conflict resolution
-- ⬜ Reset/cherry-pick
+- 🔄 Stash (cloud-backed)
+- 🔄 Merge/conflict resolution
+- 🔄 Reset/cherry-pick
 - ✅ Change summary with files and +/- line counts
 
 ### 07 GitHub Connector
@@ -293,12 +293,13 @@
 - ✅ GitHub workspace navigation links Releases and Actions
 - ✅ Rich Android artifact management: APK/AAB detection, build metadata, expiration, download/extraction, APK install and AAB sharing
 - ✅ Deterministic CI failure intelligence: ranked known failure signatures, contextual evidence, line numbers and no-fabrication unknown handling
+- ✅ Advanced Git operations hardening: validated stash branches, merge commit messages, explicit merge-conflict errors, safe reset/cherry-pick validation
 - 🔄 GitHub repository discovery and Actions build/artifact foundation
 
 ## Next priority
 
-1. ⬜ Complete remaining Git first-class operations: stash, merge/conflict resolution, reset/cherry-pick.
-2. ⬜ Complete AI tool permissions + patch/snapshot/rollback.
+1. ⬜ Complete Git merge conflict resolution and finish the remaining first-class Git workflow.
+2. ⬜ Complete AI tool permissions + patch/snapshot/rollback integration.
 3. ⬜ Complete task/coding/debug agents.
 
-_Last updated: 2026-08-26 — CI failure intelligence verified by Android CI after commit 61785924f46ba481dea8ae9ebb88e6028585bd3f._
+_Last updated: 2026-08-26 — advanced Git operations hardening verified by Android CI after commit d3f78a3e12e95406070e2fe0b4079440e3986a0b (run 297)._
