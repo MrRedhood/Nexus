@@ -20,14 +20,6 @@
 - ⬜ Logging/error handling
 - ⬜ Account/backend authentication
 
-### 02 Project / Workspace
-- ⬜ Project management
-- ⬜ Workspace abstraction
-- ⬜ Local/remote workspace support
-- ⬜ File tree and metadata
-- ⬜ Recent/favorite files
-- ⬜ Unified FileSystem abstraction
-
 ### 03 File System
 - 🔄 GitHub-backed file operations
 - 🔄 Workspace-wide AI file access
@@ -75,6 +67,7 @@
 - ✅ Issues
 - 🔄 Actions
 - ✅ Checks
+- 🔄 Releases
 - ⬜ Webhooks
 - ⬜ Secure short-lived installation tokens
 
@@ -86,7 +79,7 @@
 - ✅ AAB workflow
 - ⬜ Build profiles
 - 🔄 Dispatch/tracking
-- ⬜ Live logs
+- 🔄 Live logs
 - 🔄 Build history
 - 🔄 Artifact download/metadata
 - ⬜ Build failure intelligence
@@ -295,14 +288,17 @@
 - ✅ ChatGPT-style GitHub Issues management UI
 - ✅ GitHub Releases REST service: list/detail/create/edit/publish/delete and release-asset upload support
 - ✅ ChatGPT-style GitHub Releases screen: release list/detail, draft/pre-release state, notes, tags and asset links
+- ✅ GitHub Actions run workspace: workflow dispatch, run tracking, jobs, status/conclusion, duration, logs, failed-job rerun and cancellation
+- ✅ ChatGPT-style GitHub Actions build/details screen
+- ✅ GitHub workspace navigation links Releases and Actions
 - 🔄 GitHub repository discovery and Actions build/artifact foundation
 
 ## Next priority
 
-1. 🔄 Integrate Releases into the GitHub workspace and complete Actions run details: jobs, status/conclusion, duration, logs, rerun and build→commit→artifact linking.
-2. ⬜ Build failure intelligence and richer APK/AAB artifact management.
+1. 🔄 Rich APK/AAB artifact management: identify build artifacts, show commit/branch/run metadata, support direct artifact download/open and build-to-artifact linking.
+2. ⬜ Build failure intelligence: extract actionable failures from failed CI jobs without fabricating diagnoses.
 3. ⬜ Complete remaining Git first-class operations: stash, merge/conflict resolution, reset/cherry-pick.
 4. ⬜ Complete AI tool permissions + patch/snapshot/rollback.
 5. ⬜ Complete task/coding/debug agents.
 
-_Last updated: 2026-08-26 — GitHub Releases service/screen verified by Android CI #265 (run 32934108035)._
+_Last updated: 2026-08-26 — GitHub Actions workspace integration verified by Android CI #270 (run 32935005690)._
