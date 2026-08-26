@@ -15,7 +15,6 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
@@ -70,6 +69,7 @@ fun GitHubScreen(project: NexusProject, onBack: () -> Unit) {
     var showCreatePr by remember { mutableStateOf(false) }
     var prState by remember { mutableStateOf("open") }
     var showIssues by remember { mutableStateOf(false) }
+    var showChecks by remember { mutableStateOf(false) }
 
     fun token() = tokenStore.get("github")
 
@@ -126,6 +126,7 @@ fun GitHubScreen(project: NexusProject, onBack: () -> Unit) {
 
     BackHandler {
         when {
+            showChecks -> showChecks = false
             showIssues -> showIssues = false
             selectedPr != null -> selectedPr = null
             reviewPr != null -> reviewPr = null
@@ -133,6 +134,10 @@ fun GitHubScreen(project: NexusProject, onBack: () -> Unit) {
         }
     }
 
+    if (showChecks) {
+        GitHubChecksScreen(project = project, onBack = { showChecks = false })
+        return
+    }
     if (showIssues) {
         GitHubIssuesScreen(project = project, onBack = { showIssues = false })
         return
@@ -142,7 +147,10 @@ fun GitHubScreen(project: NexusProject, onBack: () -> Unit) {
         TopAppBar(
             title = { Text("GitHub") },
             navigationIcon = { IconButton(onClick = onBack) { Text("‹") } },
-            actions = { TextButton(onClick = { showIssues = true }) { Text("Issues") } }
+            actions = {
+                TextButton(onClick = { showChecks = true }) { Text("Checks") }
+                TextButton(onClick = { showIssues = true }) { Text("Issues") }
+            }
         )
     }) { padding ->
         LazyColumn(
