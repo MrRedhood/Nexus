@@ -36,6 +36,24 @@ data class GitHubPullRequestFile(
     val patch: String?
 )
 
+data class GitHubPullRequestComment(
+    val id: Long,
+    val author: String,
+    val body: String,
+    val createdAt: String,
+    val updatedAt: String,
+    val htmlUrl: String?
+)
+
+data class GitHubPullRequestReview(
+    val id: Long,
+    val author: String,
+    val body: String,
+    val state: String,
+    val submittedAt: String,
+    val htmlUrl: String?
+)
+
 class GitHubPullRequestService {
     suspend fun list(repository: String, token: String, state: String = "open", limit: Int = 50): List<GitHubPullRequest> = withContext(Dispatchers.IO) {
         val items = apiArray("GET", "/repos/$repository/pulls?state=${encode(state)}&per_page=${limit.coerceIn(1, 100)}", token)
@@ -52,6 +70,31 @@ class GitHubPullRequestService {
             val o = items.getJSONObject(i)
             GitHubPullRequestFile(o.getString("filename"), o.optString("status"), o.optInt("additions"), o.optInt("deletions"), o.optInt("changes"), o.optString("patch").ifBlank { null })
         }
+    }
+
+    suspend fun comments(repository: String, number: Int, token: String, limit: Int = 100): List<GitHubPullRequestComment> = withContext(Dispatchers.IO) {
+        val items = apiArray("GET", "/repos/$repository/issues/$number/comments?per_page=${limit.coerceIn(1, 100)}", token)
+        (0 until items.length()).map { parseComment(items.getJSONObject(it)) }
+    }
+
+    suspend fun addComment(repository: String, number: Int, body: String, token: String): GitHubPullRequestComment = withContext(Dispatchers.IO) {
+        require(body.isNotBlank()) { "Comment cannot be empty" }
+        parseComment(apiJson("POST", "/repos/$repository/issues/$number/comments", token, JSONObject().put("body", body.trim())))
+    }
+
+    suspend fun reviews(repository: String, number: Int, token: String, limit: Int = 100): List<GitHubPullRequestReview> = withContext(Dispatchers.IO) {
+        val items = apiArray("GET", "/repos/$repository/pulls/$number/reviews?per_page=${limit.coerceIn(1, 100)}", token)
+        (0 until items.length()).map { parseReview(items.getJSONObject(it)) }
+    }
+
+    suspend fun submitReview(repository: String, number: Int, body: String, event: String, token: String): GitHubPullRequestReview = withContext(Dispatchers.IO) {
+        val normalizedEvent = event.uppercase()
+        require(normalizedEvent in setOf("COMMENT", "APPROVE", "REQUEST_CHANGES")) { "Unsupported review event" }
+        if (normalizedEvent == "REQUEST_CHANGES") require(body.isNotBlank()) { "A change-request review must include a comment" }
+        parseReview(apiJson("POST", "/repos/$repository/pulls/$number/reviews", token, JSONObject().apply {
+            put("body", body.trim())
+            put("event", normalizedEvent)
+        }))
     }
 
     suspend fun create(repository: String, head: String, base: String, title: String, body: String, token: String, draft: Boolean = false): GitHubPullRequest = withContext(Dispatchers.IO) {
@@ -76,7 +119,9 @@ class GitHubPullRequestService {
     }
 
     suspend fun merge(repository: String, number: Int, token: String, method: String = "squash"): Boolean = withContext(Dispatchers.IO) {
-        val result = apiJson("PUT", "/repos/$repository/pulls/$number/merge", token, JSONObject().put("merge_method", method))
+        val normalizedMethod = method.lowercase()
+        require(normalizedMethod in setOf("merge", "squash", "rebase")) { "Unsupported merge method" }
+        val result = apiJson("PUT", "/repos/$repository/pulls/$number/merge", token, JSONObject().put("merge_method", normalizedMethod))
         result.optBoolean("merged", false)
     }
 
@@ -85,24 +130,26 @@ class GitHubPullRequestService {
         val base = o.optJSONObject("base")
         val user = o.optJSONObject("user")
         return GitHubPullRequest(
-            number = o.getInt("number"),
-            title = o.optString("title"),
-            body = o.optString("body"),
-            state = o.optString("state"),
-            draft = o.optBoolean("draft", false),
-            head = head?.optString("ref", "") ?: "",
-            base = base?.optString("ref", "") ?: "",
-            headSha = head?.optString("sha", "") ?: "",
-            author = user?.optString("login", "Unknown") ?: "Unknown",
-            createdAt = o.optString("created_at"),
-            updatedAt = o.optString("updated_at"),
-            merged = o.optBoolean("merged", false),
-            additions = o.optInt("additions", 0),
-            deletions = o.optInt("deletions", 0),
-            changedFiles = o.optInt("changed_files", 0),
+            number = o.getInt("number"), title = o.optString("title"), body = o.optString("body"), state = o.optString("state"),
+            draft = o.optBoolean("draft", false), head = head?.optString("ref", "") ?: "", base = base?.optString("ref", "") ?: "",
+            headSha = head?.optString("sha", "") ?: "", author = user?.optString("login", "Unknown") ?: "Unknown",
+            createdAt = o.optString("created_at"), updatedAt = o.optString("updated_at"), merged = o.optBoolean("merged", false),
+            additions = o.optInt("additions", 0), deletions = o.optInt("deletions", 0), changedFiles = o.optInt("changed_files", 0),
             htmlUrl = o.optString("html_url").ifBlank { null }
         )
     }
+
+    private fun parseComment(o: JSONObject) = GitHubPullRequestComment(
+        id = o.optLong("id"), author = o.optJSONObject("user")?.optString("login", "Unknown") ?: "Unknown",
+        body = o.optString("body"), createdAt = o.optString("created_at"), updatedAt = o.optString("updated_at"),
+        htmlUrl = o.optString("html_url").ifBlank { null }
+    )
+
+    private fun parseReview(o: JSONObject) = GitHubPullRequestReview(
+        id = o.optLong("id"), author = o.optJSONObject("user")?.optString("login", "Unknown") ?: "Unknown",
+        body = o.optString("body"), state = o.optString("state"), submittedAt = o.optString("submitted_at"),
+        htmlUrl = o.optString("html_url").ifBlank { null }
+    )
 
     private fun apiJson(method: String, path: String, token: String, body: JSONObject? = null): JSONObject = JSONObject(apiRequest(method, path, token, body))
     private fun apiArray(method: String, path: String, token: String): JSONArray = JSONArray(apiRequest(method, path, token, null))
@@ -110,17 +157,14 @@ class GitHubPullRequestService {
     private fun apiRequest(method: String, path: String, token: String, body: JSONObject?): String {
         require(token.isNotBlank()) { "GitHub token is not configured. Add it in Settings > GitHub." }
         val connection = (URL("https://api.github.com$path").openConnection() as HttpURLConnection).apply {
-            requestMethod = method
-            connectTimeout = 15_000
-            readTimeout = 30_000
+            requestMethod = method; connectTimeout = 15_000; readTimeout = 30_000
             setRequestProperty("Accept", "application/vnd.github+json")
             setRequestProperty("Authorization", "Bearer $token")
             setRequestProperty("X-GitHub-Api-Version", "2022-11-28")
             setRequestProperty("User-Agent", "Nexus-Android")
         }
         if (body != null) {
-            connection.doOutput = true
-            connection.setRequestProperty("Content-Type", "application/json")
+            connection.doOutput = true; connection.setRequestProperty("Content-Type", "application/json")
             connection.outputStream.use { it.write(body.toString().toByteArray(Charsets.UTF_8)) }
         }
         val code = connection.responseCode
