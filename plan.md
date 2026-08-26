@@ -54,16 +54,16 @@
 - ⬜ Semantic search later
 
 ### 06 Git
-- ⬜ Status
-- ⬜ Diff
-- ⬜ Stage/unstage
-- ⬜ Commit
-- ⬜ Branch/checkout
-- ⬜ Log
+- ✅ Status
+- ✅ Diff
+- ✅ Stage/unstage
+- ✅ Commit
+- ✅ Branch/checkout
+- ✅ Log
 - ⬜ Stash
 - ⬜ Merge/conflict resolution
 - ⬜ Reset/cherry-pick
-- ⬜ Change summary with files and +/- line counts
+- ✅ Change summary with files and +/- line counts
 
 ### 07 GitHub Connector
 - 🔄 GitHub repository synchronization
@@ -284,12 +284,15 @@
 - ✅ Nexus app logo integration
 - ✅ Settings simplification and model selector consolidation
 - ✅ Editor syntax highlighting for supported programming languages
-- 🔄 GitHub repository discovery and Actions foundation (awaiting CI)
+- ✅ Git status/diff/stage/unstage/commit/change-summary operations
+- ✅ Git branch listing and safe workspace checkout
+- ✅ Git commit history/log
+- 🔄 GitHub repository discovery and Actions foundation
 
 ## Next priority
 
-1. ⬜ Complete Git first-class operations.
-2. 🔄 Complete GitHub connector/Actions operations.
+1. ⬜ Complete remaining Git first-class operations: stash, merge/conflict resolution, reset/cherry-pick.
+2. 🔄 Complete GitHub connector/Actions operations, starting with Pull Requests.
 3. ⬜ Build cloud APK/AAB pipeline.
 4. ⬜ Complete AI tool permissions + patch/snapshot/rollback.
 5. ⬜ Complete task/coding/debug agents.
