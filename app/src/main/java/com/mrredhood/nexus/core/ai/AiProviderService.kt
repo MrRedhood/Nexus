@@ -25,13 +25,15 @@ class AiProviderService(context: Context) {
         val config = settings.settings.first(); val provider = config.provider.trim(); val key = keys.get(provider) ?: return@withContext ConnectionTestResult(false, "No API key configured for $provider.")
         val model = resolveModel(provider, "", config.model); if (model.isBlank()) return@withContext ConnectionTestResult(false, "Select a model for $provider first.")
         try { val result = execute(AiRequest(listOf(AiMessage("user", "Reply with OK.")), model = model, temperature = 0.0, maxOutputTokens = 8), false) { }; if (result.success) ConnectionTestResult(true, "Connection successful with $provider / $model.") else ConnectionTestResult(false, result.message.ifBlank { "Connection failed." }) }
-        catch (e: CancellationException) { throw e }; catch (e: Throwable) { ConnectionTestResult(false, e.message ?: "Connection failed.") }
+        catch (e: CancellationException) { throw e }
+        catch (e: Throwable) { ConnectionTestResult(false, e.message ?: "Connection failed.") }
     }
     private suspend fun execute(request: AiRequest, streaming: Boolean, onDelta: suspend (String) -> Unit): ProviderResult {
         val config = settings.settings.first(); val provider = config.provider.trim(); val key = keys.get(provider) ?: return ProviderResult(false, "No API key configured for $provider.")
         val model = resolveModel(provider, request.model, config.model); if (model.isBlank()) return ProviderResult(false, "No model configured for $provider.")
         return try { when { provider.equals("Gemini", true) -> gemini(key, model, request, streaming, onDelta); provider.equals("Anthropic", true) -> anthropic(key, model, request, config.endpoint, streaming, onDelta); else -> openAi(provider, key, model, request, config.endpoint, streaming, onDelta) } }
-        catch (e: CancellationException) { throw e }; catch (e: Throwable) { ProviderResult(false, e.message ?: "AI request failed.") }
+        catch (e: CancellationException) { throw e }
+        catch (e: Throwable) { ProviderResult(false, e.message ?: "AI request failed.") }
     }
     private suspend fun gemini(key: String, model: String, request: AiRequest, streaming: Boolean, onDelta: suspend (String) -> Unit): ProviderResult {
         val url = if (streaming) "https://generativelanguage.googleapis.com/v1beta/models/${encode(model)}:streamGenerateContent?alt=sse&key=${encode(key)}" else "https://generativelanguage.googleapis.com/v1beta/models/${encode(model)}:generateContent?key=${encode(key)}"
