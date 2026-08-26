@@ -50,6 +50,11 @@ class NexusActionExecutor(private val fileSystem: WorkspaceFileSystem) {
         if (!result.success && snapshotId != null) snapshotStore.forget(snapshotId)
         val counts = parseCounts(result.message)
         NexusActionExecutionRegistry.record(NexusActionExecutionSummary(action.id, action.type, action.path, result.success, counts.first, counts.second, result.message, result.snapshotId))
+        if (result.success && result.snapshotId != null) {
+            NexusActionExecutionRegistry.registerRollback(action.id) { targetWorkspace, storedSnapshotId ->
+                snapshotStore.rollback(targetWorkspace, storedSnapshotId)
+            }
+        }
         return result
     }
 
