@@ -30,6 +30,19 @@ class GitHubAdvancedGitService {
         (status == "completed" || (status.isBlank() && sha.isNotBlank())) to (sha.ifBlank { response })
     }
 
+    suspend fun createStashBranch(repository: String, branch: String, token: String, name: String): String = withContext(Dispatchers.IO) {
+        require(name.matches(Regex("nexus/stash/[A-Za-z0-9._-]+"))) { "Invalid stash name." }
+        val baseSha = JSONObject(request("GET", "/repos/$repository/git/ref/heads/${encode(branch)}", token))
+            .getJSONObject("object").getString("sha")
+        request("POST", "/repos/$repository/git/refs", token, JSONObject().put("ref", "refs/heads/$name").put("sha", baseSha))
+        name
+    }
+
+    suspend fun dropStash(repository: String, stashBranch: String, token: String) = withContext(Dispatchers.IO) {
+        require(stashBranch.startsWith("nexus/stash/")) { "Only Nexus stash branches can be dropped." }
+        request("DELETE", "/repos/$repository/git/refs/heads/${encode(stashBranch)}", token)
+    }
+
     private fun encode(value: String): String = URLEncoder.encode(value, "UTF-8").replace("+", "%20")
 
     private fun request(method: String, path: String, token: String, body: JSONObject? = null): String {
