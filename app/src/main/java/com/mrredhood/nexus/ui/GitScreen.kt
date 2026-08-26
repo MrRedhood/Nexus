@@ -182,6 +182,7 @@ fun GitScreen(project: NexusProject, workspace: Workspace, onBack: () -> Unit) {
     if (showAdvancedGit) {
         GitAdvancedOperationsDialog(
             project = project,
+            workspace = workspace,
             branch = branch,
             branches = branches,
             onClose = { showAdvancedGit = false },
@@ -200,7 +201,7 @@ fun GitScreen(project: NexusProject, workspace: Workspace, onBack: () -> Unit) {
 
     if (showBranches) {
         LaunchedEffect(repository, branch) { runGit { accessToken -> branches = service.branches(repository, branch, accessToken) } }
-        AlertDialog(onDismissRequest = { showBranches = false }, title = { Text("Branches") }, text = { if (branches.isEmpty()) CircularProgressIndicator() else LazyColumn { items(branches, key = { it.name }) { gitBranch -> TextButton(enabled = !loading, onClick = { if (gitBranch.name == branch) showBranches = false else runGit { accessToken -> val currentStatus = service.status(repository, branch, accessToken, workspace); if (currentStatus.changed.isNotEmpty() || currentStatus.added.isNotEmpty() || currentStatus.deleted.isNotEmpty()) { error = "Commit or discard local changes before switching branches."; return@runGit }; val count = service.fetch(repository, gitBranch.name, accessToken, workspace); branch = gitBranch.name; staged = emptySet(); info = "Checked out ${gitBranch.name} ($count files)"; showBranches = false; status = service.status(repository, branch, accessToken, workspace); diffs = service.diff(repository, branch, accessToken, workspace) } }) { Text(if (gitBranch.current) "✓ ${gitBranch.name}" else gitBranch.name) } } } }, confirmButton = { TextButton(onClick = { showBranches = false }) { Text("Close") } })
+        AlertDialog(onDismissRequest = { showBranches = false }, title = { Text("Branches") }, text = { if (branches.isEmpty()) CircularProgressIndicator() else LazyColumn { items(branches, key = { it.name }) { gitBranch -> TextButton(enabled = !loading, onClick = { if (gitBranch.name == branch) showBranches = false else runGit { accessToken -> val currentStatus = service.status(repository, branch, accessToken, workspace); if (currentStatus.changed.isNotEmpty() || currentStatus.added.isNotEmpty() || currentStatus.deleted.isNotEmpty()) { error = "Commit or stash local changes before switching branches."; return@runGit }; val count = service.fetch(repository, gitBranch.name, accessToken, workspace); branch = gitBranch.name; staged = emptySet(); info = "Checked out ${gitBranch.name} ($count files)"; showBranches = false; status = service.status(repository, branch, accessToken, workspace); diffs = service.diff(repository, branch, accessToken, workspace) } }) { Text(if (gitBranch.current) "✓ ${gitBranch.name}" else gitBranch.name) } } } }, confirmButton = { TextButton(onClick = { showBranches = false }) { Text("Close") } })
     }
 
     if (showLog) {
