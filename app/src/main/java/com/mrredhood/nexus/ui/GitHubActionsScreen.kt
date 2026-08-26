@@ -35,6 +35,7 @@ import androidx.compose.ui.unit.dp
 import com.mrredhood.nexus.core.model.NexusProject
 import com.mrredhood.nexus.core.settings.ApiKeyStore
 import com.mrredhood.nexus.core.workspace.GitHubArtifact
+import com.mrredhood.nexus.core.workspace.GitHubFailureAnalyzer
 import com.mrredhood.nexus.core.workspace.GitHubRepositoryService
 import com.mrredhood.nexus.core.workspace.GitHubWorkflow
 import com.mrredhood.nexus.core.workspace.GitHubWorkflowJob
@@ -120,7 +121,23 @@ fun GitHubActionsScreen(project: NexusProject, onBack: () -> Unit) {
             TextButton(onClick = { selectedRun = null }) { Text("Done") }
         } })
     }
-    logs?.let { content -> AlertDialog(onDismissRequest = { logs = null }, title = { Text("GitHub job logs") }, text = { LazyColumn { item { Text(content, style = MaterialTheme.typography.bodySmall) } } }, confirmButton = { TextButton(onClick = { logs = null }) { Text("Close") } }) }
+    logs?.let { content ->
+        val findings = remember(content) { GitHubFailureAnalyzer.analyze(content) }
+        AlertDialog(onDismissRequest = { logs = null }, title = { Text("GitHub job logs") }, text = { LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            if (findings.isNotEmpty()) {
+                item { Text("Failure findings", style = MaterialTheme.typography.titleMedium) }
+                items(findings, key = { "${it.category}-${it.lineNumber}-${it.evidence}" }) { finding ->
+                    Card(modifier = Modifier.fillMaxWidth()) { Column(modifier = Modifier.padding(10.dp)) {
+                        Text(finding.category, style = MaterialTheme.typography.labelLarge)
+                        Text(finding.message)
+                        Text("Evidence${finding.lineNumber?.let { " · line $it" } ?: ""}: ${finding.evidence}", style = MaterialTheme.typography.bodySmall)
+                    } }
+                }
+            } else item { Text("No known actionable failure signature was found. Nexus will not invent a diagnosis; inspect the raw log below.") }
+            item { Text("Raw log", style = MaterialTheme.typography.titleMedium) }
+            item { Text(content, style = MaterialTheme.typography.bodySmall) }
+        } }, confirmButton = { TextButton(onClick = { logs = null }) { Text("Close") } })
+    }
 }
 
 private fun duration(start: String, end: String): String = runCatching { val seconds = Duration.between(Instant.parse(start), Instant.parse(end)).seconds.coerceAtLeast(0); "${seconds / 60}m ${seconds % 60}s" }.getOrDefault("—")
