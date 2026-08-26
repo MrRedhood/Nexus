@@ -51,20 +51,21 @@ class GitHubChecksService {
 
     private fun parseRun(o: JSONObject): GitHubCheckRun {
         val app = o.optJSONObject("app")
+        val output = o.optJSONObject("output")
         return GitHubCheckRun(
             id = o.getLong("id"),
             name = o.optString("name", "Check"),
             status = o.optString("status", "unknown"),
             conclusion = o.optString("conclusion").ifBlank { null },
             sha = o.optString("head_sha"),
-            branch = o.optString("check_suite", "").let { o.optString("head_branch").ifBlank { null } },
+            branch = o.optString("head_branch").ifBlank { null },
             htmlUrl = o.optString("html_url").ifBlank { null },
             detailsUrl = o.optString("details_url").ifBlank { null },
             startedAt = o.optString("started_at").ifBlank { null },
             completedAt = o.optString("completed_at").ifBlank { null },
-            summary = o.optJSONObject("output")?.optString("summary").ifBlank { null },
-            text = o.optJSONObject("output")?.optString("text").ifBlank { null },
-            appName = app?.optString("name").ifBlank { null }
+            summary = output?.optString("summary")?.ifBlank { null },
+            text = output?.optString("text")?.ifBlank { null },
+            appName = app?.optString("name")?.ifBlank { null }
         )
     }
 
