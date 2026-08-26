@@ -30,6 +30,8 @@ object GitHubFailureAnalyzer {
         Rule("Timeout", Regex("(?i)(timed out|timeout|exceeded.*time limit)"), "The CI job timed out. Inspect the longest-running step and recent log activity before changing code.", 45)
     )
 
+    private val priorities = rules.associate { it.category to it.priority }
+
     fun analyze(log: String, maxFindings: Int = 8): List<GitHubFailureFinding> {
         if (log.isBlank() || maxFindings <= 0) return emptyList()
         val lines = log.lines()
@@ -42,7 +44,7 @@ object GitHubFailureAnalyzer {
         }
         return matches
             .distinctBy { "${it.category}|${it.evidence}" }
-            .sortedWith(compareByDescending<GitHubFailureFinding> { rules.first { it.category == it.category }.priority }.thenBy { it.lineNumber ?: Int.MAX_VALUE })
+            .sortedWith(compareByDescending<GitHubFailureFinding> { priorities[it.category] ?: 0 }.thenBy { it.lineNumber ?: Int.MAX_VALUE })
             .take(maxFindings)
             .map { it.copy(confidence = if (it.category == "Gradle") "medium" else "high") }
     }
