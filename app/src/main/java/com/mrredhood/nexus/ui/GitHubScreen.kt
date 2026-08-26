@@ -61,6 +61,7 @@ fun GitHubScreen(project: NexusProject, onBack: () -> Unit) {
     var error by remember { mutableStateOf<String?>(null) }
     var selectedWorkflow by remember { mutableStateOf<GitHubWorkflow?>(null) }
     var selectedPr by remember { mutableStateOf<GitHubPullRequest?>(null) }
+    var reviewPr by remember { mutableStateOf<GitHubPullRequest?>(null) }
     var selectedPrFiles by remember { mutableStateOf<List<GitHubPullRequestFile>>(emptyList()) }
     var showCreatePr by remember { mutableStateOf(false) }
     var prState by remember { mutableStateOf("open") }
@@ -71,11 +72,9 @@ fun GitHubScreen(project: NexusProject, onBack: () -> Unit) {
         val accessToken = token()
         if (accessToken.isNullOrBlank()) { error = "Add a GitHub token in Settings > GitHub first."; return }
         scope.launch {
-            loading = true
-            error = null
+            loading = true; error = null
             runCatching { service.repositories(accessToken, query.ifBlank { null }) }
-                .onSuccess { repositories = it }
-                .onFailure { error = it.message }
+                .onSuccess { repositories = it }.onFailure { error = it.message }
             loading = false
         }
     }
@@ -84,8 +83,7 @@ fun GitHubScreen(project: NexusProject, onBack: () -> Unit) {
         val accessToken = token() ?: run { error = "Add a GitHub token in Settings > GitHub first."; return }
         if (repository.isBlank()) { error = "Connect a GitHub repository to this project first."; return }
         scope.launch {
-            loading = true
-            error = null
+            loading = true; error = null
             runCatching {
                 workflows = service.workflows(repository, accessToken)
                 runs = service.workflowRuns(repository, accessToken)
@@ -98,11 +96,9 @@ fun GitHubScreen(project: NexusProject, onBack: () -> Unit) {
         val accessToken = token() ?: run { error = "Add a GitHub token in Settings > GitHub first."; return }
         if (repository.isBlank()) { error = "Connect a GitHub repository to this project first."; return }
         scope.launch {
-            loading = true
-            error = null
+            loading = true; error = null
             runCatching { pullRequestService.list(repository, accessToken, prState) }
-                .onSuccess { pullRequests = it }
-                .onFailure { error = it.message }
+                .onSuccess { pullRequests = it }.onFailure { error = it.message }
             loading = false
         }
     }
@@ -110,8 +106,7 @@ fun GitHubScreen(project: NexusProject, onBack: () -> Unit) {
     fun openPullRequest(pr: GitHubPullRequest) {
         val accessToken = token() ?: return
         scope.launch {
-            loading = true
-            error = null
+            loading = true; error = null
             runCatching {
                 selectedPr = pullRequestService.get(repository, pr.number, accessToken)
                 selectedPrFiles = pullRequestService.files(repository, pr.number, accessToken)
@@ -122,30 +117,18 @@ fun GitHubScreen(project: NexusProject, onBack: () -> Unit) {
 
     LaunchedEffect(Unit) {
         loadRepositories()
-        if (repository.isNotBlank()) {
-            loadActions()
-            loadPullRequests()
-        }
+        if (repository.isNotBlank()) { loadActions(); loadPullRequests() }
     }
 
     Scaffold(topBar = {
-        TopAppBar(
-            title = { Text("GitHub") },
-            navigationIcon = { IconButton(onClick = onBack) { Text("‹") } }
-        )
+        TopAppBar(title = { Text("GitHub") }, navigationIcon = { IconButton(onClick = onBack) { Text("‹") } })
     }) { padding ->
         LazyColumn(
             modifier = Modifier.fillMaxSize().padding(padding).padding(horizontal = 16.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             item {
-                OutlinedTextField(
-                    value = query,
-                    onValueChange = { query = it },
-                    modifier = Modifier.fillMaxWidth(),
-                    label = { Text("Search repositories") },
-                    singleLine = true
-                )
+                OutlinedTextField(value = query, onValueChange = { query = it }, modifier = Modifier.fillMaxWidth(), label = { Text("Search repositories") }, singleLine = true)
             }
             item {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -155,30 +138,21 @@ fun GitHubScreen(project: NexusProject, onBack: () -> Unit) {
             }
             if (loading) item { LinearProgressIndicator(modifier = Modifier.fillMaxWidth()) }
             error?.let { message -> item { Text(message) } }
-
             item { Text("Repositories") }
             items(repositories, key = { it.fullName }) { repo ->
                 Card(modifier = Modifier.fillMaxWidth()) {
                     Column(modifier = Modifier.padding(14.dp)) {
-                        Text(repo.fullName)
-                        Text(repo.description ?: "No description")
-                        Text("Default branch · ${repo.defaultBranch}")
+                        Text(repo.fullName); Text(repo.description ?: "No description"); Text("Default branch · ${repo.defaultBranch}")
                     }
                 }
             }
 
             if (repository.isNotBlank()) {
                 item {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                         Text("Pull Requests")
                         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                            OutlinedButton(onClick = {
-                                prState = if (prState == "open") "closed" else "open"
-                                loadPullRequests()
-                            }, enabled = !loading) { Text(if (prState == "open") "Closed" else "Open") }
+                            OutlinedButton(onClick = { prState = if (prState == "open") "closed" else "open"; loadPullRequests() }, enabled = !loading) { Text(if (prState == "open") "Closed" else "Open") }
                             Button(onClick = { showCreatePr = true }, enabled = !loading) { Text("New PR") }
                         }
                     }
@@ -192,21 +166,17 @@ fun GitHubScreen(project: NexusProject, onBack: () -> Unit) {
                         }
                     }
                 }
-
                 item { Text("Actions") }
                 items(workflows, key = { it.id }) { workflow ->
                     Card(modifier = Modifier.fillMaxWidth()) {
                         Column(modifier = Modifier.padding(14.dp)) {
-                            Text(workflow.name)
-                            Text(workflow.path)
+                            Text(workflow.name); Text(workflow.path)
                             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                 Button(onClick = {
                                     val accessToken = token() ?: return@Button
                                     scope.launch {
                                         loading = true
-                                        runCatching {
-                                            service.dispatchWorkflow(repository, workflow.id, accessToken, project.branch.ifBlank { "main" })
-                                        }.onFailure { error = it.message }
+                                        runCatching { service.dispatchWorkflow(repository, workflow.id, accessToken, project.branch.ifBlank { "main" }) }.onFailure { error = it.message }
                                         runs = runCatching { service.workflowRuns(repository, accessToken) }.getOrDefault(runs)
                                         loading = false
                                     }
@@ -228,12 +198,7 @@ fun GitHubScreen(project: NexusProject, onBack: () -> Unit) {
     }
 
     selectedWorkflow?.let { workflow ->
-        AlertDialog(
-            onDismissRequest = { selectedWorkflow = null },
-            title = { Text(workflow.name) },
-            text = { Text("Workflow: ${workflow.path}\nState: ${workflow.state}") },
-            confirmButton = { TextButton(onClick = { selectedWorkflow = null }) { Text("Close") } }
-        )
+        AlertDialog(onDismissRequest = { selectedWorkflow = null }, title = { Text(workflow.name) }, text = { Text("Workflow: ${workflow.path}\nState: ${workflow.state}") }, confirmButton = { TextButton(onClick = { selectedWorkflow = null }) { Text("Close") } })
     }
 
     if (showCreatePr) {
@@ -242,93 +207,83 @@ fun GitHubScreen(project: NexusProject, onBack: () -> Unit) {
         var head by remember { mutableStateOf(project.branch.ifBlank { "main" }) }
         var base by remember { mutableStateOf("main") }
         AlertDialog(
-            onDismissRequest = { showCreatePr = false },
-            title = { Text("Create pull request") },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedTextField(title, { title = it }, label = { Text("Title") }, singleLine = true)
-                    OutlinedTextField(head, { head = it }, label = { Text("Head branch") }, singleLine = true)
-                    OutlinedTextField(base, { base = it }, label = { Text("Base branch") }, singleLine = true)
-                    OutlinedTextField(body, { body = it }, label = { Text("Description") }, minLines = 3)
+            onDismissRequest = { showCreatePr = false }, title = { Text("Create pull request") },
+            text = { Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(title, { title = it }, label = { Text("Title") }, singleLine = true)
+                OutlinedTextField(head, { head = it }, label = { Text("Head branch") }, singleLine = true)
+                OutlinedTextField(base, { base = it }, label = { Text("Base branch") }, singleLine = true)
+                OutlinedTextField(body, { body = it }, label = { Text("Description") }, minLines = 3)
+            } },
+            confirmButton = { TextButton(enabled = title.isNotBlank() && head.isNotBlank() && base.isNotBlank() && !loading, onClick = {
+                val accessToken = token() ?: return@TextButton
+                scope.launch {
+                    loading = true
+                    runCatching { pullRequestService.create(repository, head, base, title, body, accessToken) }
+                        .onSuccess { created -> showCreatePr = false; selectedPr = created; selectedPrFiles = emptyList(); loadPullRequests() }
+                        .onFailure { error = it.message }
+                    loading = false
                 }
-            },
-            confirmButton = {
-                TextButton(enabled = title.isNotBlank() && head.isNotBlank() && base.isNotBlank() && !loading, onClick = {
-                    val accessToken = token() ?: return@TextButton
-                    scope.launch {
-                        loading = true
-                        runCatching { pullRequestService.create(repository, head, base, title, body, accessToken) }
-                            .onSuccess { created ->
-                                showCreatePr = false
-                                selectedPr = created
-                                selectedPrFiles = emptyList()
-                                loadPullRequests()
-                            }
-                            .onFailure { error = it.message }
-                        loading = false
-                    }
-                }) { Text("Create") }
-            },
+            }) { Text("Create") } },
             dismissButton = { TextButton(onClick = { showCreatePr = false }) { Text("Cancel") } }
         )
     }
 
     selectedPr?.let { pr ->
         AlertDialog(
-            onDismissRequest = { selectedPr = null },
-            title = { Text("#${pr.number} ${pr.title}") },
-            text = {
-                LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    item { Text("${pr.head} → ${pr.base}") }
-                    item { Text("State: ${pr.state}${if (pr.merged) " · merged" else ""}") }
-                    item { Text("Author: ${pr.author}") }
-                    item { Text("Changes: +${pr.additions} -${pr.deletions} · ${pr.changedFiles} files") }
-                    if (pr.body.isNotBlank()) item { Text(pr.body) }
-                    item { Text("Changed files") }
-                    items(selectedPrFiles, key = { it.path }) { file ->
-                        Column(modifier = Modifier.fillMaxWidth()) {
-                            Text(file.path)
-                            Text("${file.status} · +${file.additions} -${file.deletions}")
-                            if (!file.patch.isNullOrBlank()) {
-                                Text(file.patch.take(1200), style = androidx.compose.material3.MaterialTheme.typography.bodySmall)
-                                androidx.compose.foundation.layout.Spacer(Modifier.height(4.dp))
-                            }
+            onDismissRequest = { selectedPr = null }, title = { Text("#${pr.number} ${pr.title}") },
+            text = { LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                item { Text("${pr.head} → ${pr.base}") }
+                item { Text("State: ${pr.state}${if (pr.merged) " · merged" else ""}") }
+                item { Text("Author: ${pr.author}") }
+                item { Text("Changes: +${pr.additions} -${pr.deletions} · ${pr.changedFiles} files") }
+                if (pr.body.isNotBlank()) item { Text(pr.body) }
+                item { Text("Changed files") }
+                items(selectedPrFiles, key = { it.path }) { file ->
+                    Column(modifier = Modifier.fillMaxWidth()) {
+                        Text(file.path); Text("${file.status} · +${file.additions} -${file.deletions}")
+                        if (!file.patch.isNullOrBlank()) { Text(file.patch.take(1200), style = androidx.compose.material3.MaterialTheme.typography.bodySmall); androidx.compose.foundation.layout.Spacer(Modifier.height(4.dp)) }
+                    }
+                }
+            } },
+            confirmButton = { Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                if (!pr.merged && pr.state == "open") {
+                    TextButton(enabled = !loading, onClick = {
+                        val accessToken = token() ?: return@TextButton
+                        scope.launch {
+                            loading = true
+                            runCatching { pullRequestService.merge(repository, pr.number, accessToken) }.onSuccess { merged -> if (!merged) error = "GitHub did not merge the pull request." else { selectedPr = null; loadPullRequests() } }.onFailure { error = it.message }
+                            loading = false
                         }
-                    }
+                    }) { Text("Merge") }
+                    TextButton(enabled = !loading, onClick = {
+                        val accessToken = token() ?: return@TextButton
+                        scope.launch {
+                            loading = true
+                            runCatching { pullRequestService.update(repository, pr.number, accessToken, state = "closed") }.onSuccess { selectedPr = null; loadPullRequests() }.onFailure { error = it.message }
+                            loading = false
+                        }
+                    }) { Text("Close") }
                 }
-            },
-            confirmButton = {
-                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                    if (!pr.merged && pr.state == "open") {
-                        TextButton(enabled = !loading, onClick = {
-                            val accessToken = token() ?: return@TextButton
-                            scope.launch {
-                                loading = true
-                                runCatching { pullRequestService.merge(repository, pr.number, accessToken) }
-                                    .onSuccess { merged ->
-                                        if (!merged) error = "GitHub did not merge the pull request."
-                                        else {
-                                            selectedPr = null
-                                            loadPullRequests()
-                                        }
-                                    }.onFailure { error = it.message }
-                                loading = false
-                            }
-                        }) { Text("Merge") }
-                        TextButton(enabled = !loading, onClick = {
-                            val accessToken = token() ?: return@TextButton
-                            scope.launch {
-                                loading = true
-                                runCatching { pullRequestService.update(repository, pr.number, accessToken, state = "closed") }
-                                    .onSuccess { selectedPr = null; loadPullRequests() }
-                                    .onFailure { error = it.message }
-                                loading = false
-                            }
-                        }) { Text("Close") }
-                    }
-                    TextButton(onClick = { selectedPr = null }) { Text("Done") }
-                }
-            }
+                if (repository.isNotBlank()) TextButton(enabled = !loading, onClick = { reviewPr = pr; selectedPr = null }) { Text("Review") }
+                TextButton(onClick = { selectedPr = null }) { Text("Done") }
+            } }
         )
+    }
+
+    reviewPr?.let { pr ->
+        val accessToken = token()
+        if (accessToken.isNullOrBlank()) {
+            reviewPr = null
+            error = "Add a GitHub token in Settings > GitHub first."
+        } else {
+            PullRequestReviewDialog(
+                repository = repository,
+                pullRequest = pr,
+                token = accessToken,
+                service = pullRequestService,
+                onDismiss = { reviewPr = null },
+                onError = { error = it }
+            )
+        }
     }
 }
