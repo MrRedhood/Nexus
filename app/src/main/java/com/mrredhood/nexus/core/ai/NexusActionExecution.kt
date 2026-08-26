@@ -12,16 +12,16 @@ data class NexusActionExecutionSummary(
     val success: Boolean,
     val additions: Int = 0,
     val deletions: Int = 0,
-    val message: String
-)
+    val message: String,
+    val snapshotId: String? = null
+) {
+    val canRollback: Boolean get() = success && snapshotId != null
+}
 
 object NexusActionExecutionRegistry {
     private val _executions = MutableStateFlow<Map<String, NexusActionExecutionSummary>>(emptyMap())
     val executions: StateFlow<Map<String, NexusActionExecutionSummary>> = _executions.asStateFlow()
 
-    fun record(summary: NexusActionExecutionSummary) {
-        _executions.value = _executions.value + (summary.actionId to summary)
-    }
-
+    fun record(summary: NexusActionExecutionSummary) { _executions.value = _executions.value + (summary.actionId to summary) }
     fun clear() { _executions.value = emptyMap() }
 }
