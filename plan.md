@@ -30,9 +30,9 @@
 
 ### 03 File System
 - ⬜ list/read/write/create/delete/rename/move/exists/search/metadata
-- ⬜ GitHub-backed file operations
-- ⬜ Workspace-wide AI file access
-- ⬜ AI create/modify/delete files and folders
+- 🔄 GitHub-backed file operations
+- 🔄 Workspace-wide AI file access
+- 🔄 AI create/modify/delete files and folders
 
 ### 04 Editor
 - ⬜ Full mobile code editor
@@ -70,26 +70,26 @@
 - 🔄 GitHub token/credential storage
 - 🔄 Fetch/push/commit from Nexus
 - ⬜ GitHub App architecture with granular permissions
-- ⬜ Repository list/search/connect/create/fork
-- ⬜ Branch operations
+- 🔄 Repository list/search/connect/create/fork
+- 🔄 Branch operations
 - ⬜ Pull requests
 - ⬜ Issues
-- ⬜ Actions
+- 🔄 Actions
 - ⬜ Checks
 - ⬜ Webhooks
 - ⬜ Secure short-lived installation tokens
 
 ### 08 GitHub Actions / Cloud Build
-- ⬜ Workflow detection
+- 🔄 Workflow detection
 - ⬜ Workflow generator
 - ⬜ Android Debug APK workflow
 - ⬜ Release APK workflow
 - ⬜ AAB workflow
 - ⬜ Build profiles
-- ⬜ Dispatch/tracking
+- 🔄 Dispatch/tracking
 - ⬜ Live logs
-- ⬜ Build history
-- ⬜ Artifact download/metadata
+- 🔄 Build history
+- 🔄 Artifact download/metadata
 - ⬜ Build failure intelligence
 
 ### 09 Build / Artifact System
@@ -284,11 +284,12 @@
 - ✅ Nexus app logo integration
 - ✅ Settings simplification and model selector consolidation
 - ✅ Editor syntax highlighting for supported programming languages
+- 🔄 GitHub repository discovery and Actions foundation (awaiting CI)
 
 ## Next priority
 
 1. ⬜ Complete Git first-class operations.
-2. ⬜ Complete GitHub connector/Actions operations.
+2. 🔄 Complete GitHub connector/Actions operations.
 3. ⬜ Build cloud APK/AAB pipeline.
 4. ⬜ Complete AI tool permissions + patch/snapshot/rollback.
 5. ⬜ Complete task/coding/debug agents.
