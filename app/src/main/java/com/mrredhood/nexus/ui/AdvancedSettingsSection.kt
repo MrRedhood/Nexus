@@ -11,10 +11,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.mrredhood.nexus.core.ai.AiModel
 
-private val AI_PROVIDERS = listOf(
-    "Gemini", "OpenAI", "Anthropic", "OpenRouter", "Groq", "Mistral", "DeepSeek", "xAI",
-    "Together AI", "Fireworks AI", "Cerebras", "Perplexity", "DeepInfra", "LiteLLM", "Custom OpenAI-compatible"
-)
+private val AI_PROVIDERS = listOf("Gemini", "OpenRouter", "DeepInfra", "LiteLLM")
 
 @Composable
 fun AdvancedSettingsSection() {
@@ -62,19 +59,8 @@ fun AdvancedSettingsSection() {
 @Composable private fun ModelMenuText(model: AiModel) { Column { Text(model.name.ifBlank { model.id }, maxLines = 1); Text(buildString { append(model.id); if (model.premium) append(" · Premium"); else if (model.pricing.free) append(" · Free"); model.modalities.forEach { append(" · $it") } }, style = MaterialTheme.typography.labelSmall, maxLines = 1) } }
 @Composable private fun FilterRow(selected: String, onSelect: (String) -> Unit) { Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(2.dp)) { listOf("all", "free", "premium", "text", "image", "video", "audio").forEach { value -> TextButton(onClick = { onSelect(value) }) { Text(if (selected == value) "✓ ${value.replaceFirstChar { it.uppercase() }}" else value.replaceFirstChar { it.uppercase() }) } } } }
 private fun defaultEndpointHint(provider: String): String = when {
-    provider.equals("OpenAI", true) -> "https://api.openai.com/v1/chat/completions"
-    provider.equals("Anthropic", true) -> "https://api.anthropic.com/v1/messages"
     provider.equals("OpenRouter", true) -> "https://openrouter.ai/api/v1/chat/completions"
-    provider.equals("Groq", true) -> "https://api.groq.com/openai/v1/chat/completions"
-    provider.equals("Mistral", true) -> "https://api.mistral.ai/v1/chat/completions"
-    provider.equals("DeepSeek", true) -> "https://api.deepseek.com/chat/completions"
-    provider.equals("xAI", true) -> "https://api.x.ai/v1/chat/completions"
-    provider.equals("Together AI", true) -> "https://api.together.xyz/v1/chat/completions"
-    provider.equals("Fireworks AI", true) -> "https://api.fireworks.ai/inference/v1/chat/completions"
-    provider.equals("Cerebras", true) -> "https://api.cerebras.ai/v1/chat/completions"
-    provider.equals("Perplexity", true) -> "https://api.perplexity.ai/chat/completions"
     provider.equals("DeepInfra", true) -> "https://api.deepinfra.com/v1/openai/chat/completions"
     provider.equals("LiteLLM", true) -> "http://localhost:4000/v1/chat/completions"
-    provider.equals("Custom OpenAI-compatible", true) -> "https://your-host.example/v1/chat/completions"
-    else -> "Built-in provider endpoint"
+    else -> "Gemini endpoint is built in"
 }
