@@ -14,6 +14,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.AccountTree
 import androidx.compose.material.icons.outlined.ArrowBack
+import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.material.icons.outlined.Download
 import androidx.compose.material.icons.outlined.History
 import androidx.compose.material.icons.outlined.Refresh
@@ -81,6 +82,7 @@ fun GitScreen(project: NexusProject, workspace: Workspace, onBack: () -> Unit) {
     var showLog by remember { mutableStateOf(false) }
     var showTerminal by remember { mutableStateOf(false) }
     var showArtifacts by remember { mutableStateOf(false) }
+    var showCopilot by remember { mutableStateOf(false) }
 
     fun token(): String? = tokenStore.get("github")
 
@@ -117,12 +119,17 @@ fun GitScreen(project: NexusProject, workspace: Workspace, onBack: () -> Unit) {
 
     BackHandler {
         when {
+            showCopilot -> showCopilot = false
             showTerminal -> showTerminal = false
             showArtifacts -> showArtifacts = false
             else -> onBack()
         }
     }
 
+    if (showCopilot) {
+        CopilotScreen(project) { showCopilot = false }
+        return
+    }
     if (showTerminal) {
         TerminalScreen(project, workspace) { showTerminal = false }
         return
@@ -142,6 +149,9 @@ fun GitScreen(project: NexusProject, workspace: Workspace, onBack: () -> Unit) {
                     }
                 },
                 actions = {
+                    IconButton(onClick = { showCopilot = true }) {
+                        Icon(Icons.Outlined.AutoAwesome, contentDescription = "GitHub Copilot")
+                    }
                     IconButton(enabled = !loading, onClick = ::refresh) {
                         Icon(Icons.Outlined.Refresh, contentDescription = "Refresh")
                     }
@@ -170,26 +180,14 @@ fun GitScreen(project: NexusProject, workspace: Workspace, onBack: () -> Unit) {
         ) {
             Card(modifier = Modifier.fillMaxWidth()) {
                 Column(modifier = Modifier.padding(16.dp)) {
-                    Text(
-                        repository.ifBlank { "No repository" },
-                        style = MaterialTheme.typography.titleMedium
-                    )
+                    Text(repository.ifBlank { "No repository" }, style = MaterialTheme.typography.titleMedium)
                     Text("Branch · $branch")
                     status?.let { Text("Remote ${it.remoteCommit.take(7)}") }
                 }
             }
 
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                FilledTonalButton(
-                    onClick = ::refresh,
-                    enabled = !loading,
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Text("Refresh")
-                }
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FilledTonalButton(onClick = ::refresh, enabled = !loading, modifier = Modifier.weight(1f)) { Text("Refresh") }
                 FilledTonalButton(
                     onClick = {
                         runGit { accessToken ->
@@ -202,53 +200,29 @@ fun GitScreen(project: NexusProject, workspace: Workspace, onBack: () -> Unit) {
                     },
                     enabled = !loading,
                     modifier = Modifier.weight(1f)
-                ) {
-                    Text("Fetch")
-                }
+                ) { Text("Fetch") }
             }
 
-            if (loading) {
-                LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
-            }
+            if (loading) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
             error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
             info?.let { Text(it, color = MaterialTheme.colorScheme.primary) }
 
             status?.let {
-                Text(
-                    "Changes · ${it.changed.size} modified · ${it.added.size} added · ${it.deleted.size} deleted",
-                    style = MaterialTheme.typography.titleMedium
-                )
+                Text("Changes · ${it.changed.size} modified · ${it.added.size} added · ${it.deleted.size} deleted", style = MaterialTheme.typography.titleMedium)
             }
 
             if (diffs.isEmpty()) {
-                Text(
-                    "Working tree clean",
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+                Text("Working tree clean", color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Spacer(modifier = Modifier.weight(1f))
             } else {
-                LazyColumn(
-                    modifier = Modifier.weight(1f),
-                    verticalArrangement = Arrangement.spacedBy(4.dp)
-                ) {
+                LazyColumn(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     items(diffs, key = { it.path }) { diff ->
-                        Card(
-                            onClick = { selectedDiff = diff },
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
+                        Card(onClick = { selectedDiff = diff }, modifier = Modifier.fillMaxWidth()) {
                             Row(modifier = Modifier.padding(12.dp)) {
-                                Checkbox(
-                                    checked = diff.path in staged,
-                                    onCheckedChange = { checked ->
-                                        staged = if (checked) staged + diff.path else staged - diff.path
-                                    }
-                                )
+                                Checkbox(checked = diff.path in staged, onCheckedChange = { checked -> staged = if (checked) staged + diff.path else staged - diff.path })
                                 Column(modifier = Modifier.fillMaxWidth()) {
                                     Text(diff.path)
-                                    Text(
-                                        "+${diff.addedLines}  -${diff.removedLines}",
-                                        style = MaterialTheme.typography.labelMedium
-                                    )
+                                    Text("+${diff.addedLines}  -${diff.removedLines}", style = MaterialTheme.typography.labelMedium)
                                 }
                             }
                         }
@@ -256,31 +230,10 @@ fun GitScreen(project: NexusProject, workspace: Workspace, onBack: () -> Unit) {
                 }
             }
 
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                OutlinedButton(
-                    onClick = { staged = diffs.map { it.path }.toSet() },
-                    enabled = diffs.isNotEmpty() && !loading,
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Text("Stage All")
-                }
-                OutlinedButton(
-                    onClick = { staged = emptySet() },
-                    enabled = staged.isNotEmpty() && !loading,
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Text("Unstage All")
-                }
-                Button(
-                    onClick = { showCommit = true },
-                    enabled = staged.isNotEmpty() && !loading,
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Text("Commit")
-                }
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(onClick = { staged = diffs.map { it.path }.toSet() }, enabled = diffs.isNotEmpty() && !loading, modifier = Modifier.weight(1f)) { Text("Stage All") }
+                OutlinedButton(onClick = { staged = emptySet() }, enabled = staged.isNotEmpty() && !loading, modifier = Modifier.weight(1f)) { Text("Unstage All") }
+                Button(onClick = { showCommit = true }, enabled = staged.isNotEmpty() && !loading, modifier = Modifier.weight(1f)) { Text("Commit") }
             }
             Spacer(modifier = Modifier.height(4.dp))
         }
@@ -291,34 +244,20 @@ fun GitScreen(project: NexusProject, workspace: Workspace, onBack: () -> Unit) {
         AlertDialog(
             onDismissRequest = { showCommit = false },
             title = { Text("Commit staged changes") },
-            text = {
-                OutlinedTextField(
-                    value = message,
-                    onValueChange = { message = it },
-                    label = { Text("Commit message") },
-                    singleLine = true
-                )
-            },
+            text = { OutlinedTextField(value = message, onValueChange = { message = it }, label = { Text("Commit message") }, singleLine = true) },
             confirmButton = {
-                TextButton(
-                    enabled = message.isNotBlank() && !loading,
-                    onClick = {
-                        runGit { accessToken ->
-                            val result = service.commitAndPush(repository, branch, accessToken, workspace, message, staged)
-                            staged = emptySet()
-                            info = "Committed ${result.commitSha.take(7)}"
-                            showCommit = false
-                            status = service.status(repository, branch, accessToken, workspace)
-                            diffs = service.diff(repository, branch, accessToken, workspace)
-                        }
+                TextButton(enabled = message.isNotBlank() && !loading, onClick = {
+                    runGit { accessToken ->
+                        val result = service.commitAndPush(repository, branch, accessToken, workspace, message, staged)
+                        staged = emptySet()
+                        info = "Committed ${result.commitSha.take(7)}"
+                        showCommit = false
+                        status = service.status(repository, branch, accessToken, workspace)
+                        diffs = service.diff(repository, branch, accessToken, workspace)
                     }
-                ) {
-                    Text("Commit & Push")
-                }
+                }) { Text("Commit & Push") }
             },
-            dismissButton = {
-                TextButton(onClick = { showCommit = false }) { Text("Cancel") }
-            }
+            dismissButton = { TextButton(onClick = { showCommit = false }) { Text("Cancel") } }
         )
     }
 
@@ -326,101 +265,57 @@ fun GitScreen(project: NexusProject, workspace: Workspace, onBack: () -> Unit) {
         AlertDialog(
             onDismissRequest = { selectedDiff = null },
             title = { Text(diff.path) },
-            text = {
-                LazyColumn {
-                    item { Text("+${diff.addedLines}  -${diff.removedLines}") }
-                    item { Spacer(modifier = Modifier.height(8.dp)) }
-                    item {
-                        Text(
-                            diff.after.ifBlank { "File deleted" },
-                            style = MaterialTheme.typography.bodySmall
-                        )
-                    }
-                }
-            },
-            confirmButton = {
-                TextButton(onClick = { selectedDiff = null }) { Text("Close") }
-            }
+            text = { LazyColumn { item { Text("+${diff.addedLines}  -${diff.removedLines}") }; item { Spacer(modifier = Modifier.height(8.dp)) }; item { Text(diff.after.ifBlank { "File deleted" }, style = MaterialTheme.typography.bodySmall) } } },
+            confirmButton = { TextButton(onClick = { selectedDiff = null }) { Text("Close") } }
         )
     }
 
     if (showBranches) {
-        LaunchedEffect(repository, branch) {
-            runGit { accessToken ->
-                branches = service.branches(repository, branch, accessToken)
-            }
-        }
+        LaunchedEffect(repository, branch) { runGit { accessToken -> branches = service.branches(repository, branch, accessToken) } }
         AlertDialog(
-            onDismissRequest = { showBranches = false },
-            title = { Text("Branches") },
+            onDismissRequest = { showBranches = false }, title = { Text("Branches") },
             text = {
-                if (branches.isEmpty()) {
-                    CircularProgressIndicator()
-                } else {
-                    LazyColumn {
-                        items(branches, key = { it.name }) { gitBranch ->
-                            TextButton(
-                                enabled = !loading,
-                                onClick = {
-                                    if (gitBranch.name == branch) {
-                                        showBranches = false
-                                    } else {
-                                        runGit { accessToken ->
-                                            val currentStatus = service.status(repository, branch, accessToken, workspace)
-                                            if (currentStatus.changed.isNotEmpty() || currentStatus.added.isNotEmpty() || currentStatus.deleted.isNotEmpty()) {
-                                                error = "Commit or discard local changes before switching branches."
-                                                return@runGit
-                                            }
-                                            val count = service.fetch(repository, gitBranch.name, accessToken, workspace)
-                                            branch = gitBranch.name
-                                            staged = emptySet()
-                                            info = "Checked out ${gitBranch.name} ($count files)"
-                                            showBranches = false
-                                            status = service.status(repository, branch, accessToken, workspace)
-                                            diffs = service.diff(repository, branch, accessToken, workspace)
-                                        }
-                                    }
+                if (branches.isEmpty()) CircularProgressIndicator() else LazyColumn {
+                    items(branches, key = { it.name }) { gitBranch ->
+                        TextButton(enabled = !loading, onClick = {
+                            if (gitBranch.name == branch) showBranches = false else runGit { accessToken ->
+                                val currentStatus = service.status(repository, branch, accessToken, workspace)
+                                if (currentStatus.changed.isNotEmpty() || currentStatus.added.isNotEmpty() || currentStatus.deleted.isNotEmpty()) {
+                                    error = "Commit or discard local changes before switching branches."
+                                    return@runGit
                                 }
-                            ) {
-                                Text(if (gitBranch.current) "✓ ${gitBranch.name}" else gitBranch.name)
+                                val count = service.fetch(repository, gitBranch.name, accessToken, workspace)
+                                branch = gitBranch.name
+                                staged = emptySet()
+                                info = "Checked out ${gitBranch.name} ($count files)"
+                                showBranches = false
+                                status = service.status(repository, branch, accessToken, workspace)
+                                diffs = service.diff(repository, branch, accessToken, workspace)
                             }
-                        }
+                        }) { Text(if (gitBranch.current) "✓ ${gitBranch.name}" else gitBranch.name) }
                     }
                 }
             },
-            confirmButton = {
-                TextButton(onClick = { showBranches = false }) { Text("Close") }
-            }
+            confirmButton = { TextButton(onClick = { showBranches = false }) { Text("Close") } }
         )
     }
 
     if (showLog) {
-        LaunchedEffect(repository, branch) {
-            runGit { accessToken ->
-                commits = service.log(repository, branch, accessToken)
-            }
-        }
+        LaunchedEffect(repository, branch) { runGit { accessToken -> commits = service.log(repository, branch, accessToken) } }
         AlertDialog(
-            onDismissRequest = { showLog = false },
-            title = { Text("Commit history") },
+            onDismissRequest = { showLog = false }, title = { Text("Commit history") },
             text = {
-                if (commits.isEmpty()) {
-                    CircularProgressIndicator()
-                } else {
-                    LazyColumn {
-                        items(commits, key = { it.sha }) { commit ->
-                            Column(modifier = Modifier.padding(vertical = 6.dp)) {
-                                Text("${commit.sha.take(7)} · ${commit.message}")
-                                Text("${commit.author} · ${commit.timestamp}")
-                                Text("${commit.filesChanged} files changed")
-                            }
+                if (commits.isEmpty()) CircularProgressIndicator() else LazyColumn {
+                    items(commits, key = { it.sha }) { commit ->
+                        Column(modifier = Modifier.padding(vertical = 6.dp)) {
+                            Text("${commit.sha.take(7)} · ${commit.message}")
+                            Text("${commit.author} · ${commit.timestamp}")
+                            Text("${commit.filesChanged} files changed")
                         }
                     }
                 }
             },
-            confirmButton = {
-                TextButton(onClick = { showLog = false }) { Text("Close") }
-            }
+            confirmButton = { TextButton(onClick = { showLog = false }) { Text("Close") } }
         )
     }
 }
