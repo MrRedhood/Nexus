@@ -291,14 +291,14 @@
 - ✅ GitHub Actions run workspace: workflow dispatch, run tracking, jobs, status/conclusion, duration, logs, failed-job rerun and cancellation
 - ✅ ChatGPT-style GitHub Actions build/details screen
 - ✅ GitHub workspace navigation links Releases and Actions
+- ✅ Rich Android artifact management: APK/AAB detection, build metadata, expiration, download/extraction, APK install and AAB sharing
 - 🔄 GitHub repository discovery and Actions build/artifact foundation
 
 ## Next priority
 
-1. 🔄 Rich APK/AAB artifact management: identify build artifacts, show commit/branch/run metadata, support direct artifact download/open and build-to-artifact linking.
-2. ⬜ Build failure intelligence: extract actionable failures from failed CI jobs without fabricating diagnoses.
-3. ⬜ Complete remaining Git first-class operations: stash, merge/conflict resolution, reset/cherry-pick.
-4. ⬜ Complete AI tool permissions + patch/snapshot/rollback.
-5. ⬜ Complete task/coding/debug agents.
+1. ⬜ Build failure intelligence: extract actionable failures from failed CI jobs without fabricating diagnoses.
+2. ⬜ Complete remaining Git first-class operations: stash, merge/conflict resolution, reset/cherry-pick.
+3. ⬜ Complete AI tool permissions + patch/snapshot/rollback.
+4. ⬜ Complete task/coding/debug agents.
 
-_Last updated: 2026-08-26 — GitHub Actions workspace integration verified by Android CI #270 (run 32935005690)._
+_Last updated: 2026-08-26 — Rich APK/AAB artifact management verified by Android CI #282 (run 32939111689)._
