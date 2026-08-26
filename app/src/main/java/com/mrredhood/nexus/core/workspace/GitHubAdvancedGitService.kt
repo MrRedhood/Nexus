@@ -8,7 +8,6 @@ import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
 
-/** Real Git operations exposed by GitHub's Git/REST APIs. */
 data class GitMergeConflict(
     val path: String,
     val baseContent: String?,
@@ -26,6 +25,7 @@ data class GitMergePreview(
     val conflicts: List<GitMergeConflict>
 )
 
+/** Real Git operations exposed by GitHub's Git/REST APIs. */
 class GitHubAdvancedGitService {
     suspend fun mergeBranches(repository: String, base: String, head: String, token: String, message: String? = null): String = withContext(Dispatchers.IO) {
         require(base.isNotBlank() && head.isNotBlank() && base != head) { "Choose two different branches." }
@@ -45,10 +45,6 @@ class GitHubAdvancedGitService {
     suspend fun previewMergeConflicts(repository: String, base: String, head: String, token: String): GitMergePreview = withContext(Dispatchers.IO) {
         require(base.isNotBlank() && head.isNotBlank() && base != head) { "Choose two different branches." }
         val compare = JSONObject(request("GET", "/repos/$repository/compare/${encode(base)}...${encode(head)}", token))
-        val baseSha = compare.getJSONObject("base_commit").getString("sha")
-        val headSha = compare.getJSONObject("merge_base_commit").let { mergeBase ->
-            compare.optString("merge_base_commit").ifBlank { head }
-        }
         val actualHeadSha = JSONObject(request("GET", "/repos/$repository/git/ref/heads/${encode(head)}", token)).getJSONObject("object").getString("sha")
         val actualBaseSha = JSONObject(request("GET", "/repos/$repository/git/ref/heads/${encode(base)}", token)).getJSONObject("object").getString("sha")
         val mergeBaseSha = compare.getJSONObject("merge_base_commit").getString("sha")
@@ -60,19 +56,19 @@ class GitHubAdvancedGitService {
             val baseEntry = baseTree[path]
             val headEntry = headTree[path]
             val ancestorEntry = ancestorTree[path]
-            val baseShaForPath = baseEntry?.sha
-            val headShaForPath = headEntry?.sha
-            val ancestorShaForPath = ancestorEntry?.sha
-            if (baseShaForPath == headShaForPath) return@mapNotNull null
-            if (ancestorShaForPath == baseShaForPath || ancestorShaForPath == headShaForPath) return@mapNotNull null
+            val basePathSha = baseEntry?.sha
+            val headPathSha = headEntry?.sha
+            val ancestorPathSha = ancestorEntry?.sha
+            if (basePathSha == headPathSha) return@mapNotNull null
+            if (ancestorPathSha == basePathSha || ancestorPathSha == headPathSha) return@mapNotNull null
             val binary = listOf(baseEntry, headEntry, ancestorEntry).any { it?.type != null && it.type != "blob" } ||
                 listOf(baseEntry, headEntry, ancestorEntry).mapNotNull { it?.size }.any { it > MAX_TEXT_BYTES }
             GitMergeConflict(
-                path = path,
-                baseContent = if (binary) null else blobContent(repository, baseShaForPath, token),
-                headContent = if (binary) null else blobContent(repository, headShaForPath, token),
-                ancestorContent = if (binary) null else blobContent(repository, ancestorShaForPath, token),
-                binary = binary
+                path,
+                if (binary) null else blobContent(repository, basePathSha, token),
+                if (binary) null else blobContent(repository, headPathSha, token),
+                if (binary) null else blobContent(repository, ancestorPathSha, token),
+                binary
             )
         }
         GitMergePreview(base, head, actualBaseSha, actualHeadSha, mergeBaseSha, conflicts)
@@ -100,41 +96,27 @@ class GitHubAdvancedGitService {
             val baseSha = baseEntry?.sha
             val headSha = headEntry?.sha
             val ancestorSha = ancestorEntry?.sha
-            val resolved = when {
-                baseSha == headSha -> baseEntry
-                ancestorSha == baseSha -> headEntry
-                ancestorSha == headSha -> baseEntry
+            val entry = when {
+                baseSha == headSha -> baseEntry?.toJson(path)
+                ancestorSha == baseSha -> headEntry?.toJson(path)
+                ancestorSha == headSha -> baseEntry?.toJson(path)
                 else -> {
                     require(resolutions.containsKey(path)) { "Unresolved merge conflict: $path" }
-                    val content = resolutions[path]
-                    require(content.isNotEmpty() || baseSha == null || headSha == null) { "Empty resolution is not allowed for existing file $path." }
+                    require(!(baseEntry?.type != "blob" || headEntry?.type != "blob")) { "Binary or tree conflict requires choosing a side for $path." }
                     JSONObject().apply {
                         put("path", path)
                         put("mode", baseEntry?.mode ?: headEntry?.mode ?: "100644")
                         put("type", "blob")
-                        put("content", content)
+                        put("content", resolutions.getValue(path))
                     }
                 }
             }
-            if (resolved != null) {
-                if (resolved.has("content")) entries.put(resolved)
-                else entries.put(JSONObject().apply {
-                    put("path", path)
-                    put("mode", resolved.mode)
-                    put("type", resolved.type)
-                    put("sha", resolved.sha)
-                })
-            } else if (baseSha != null || headSha != null) {
-                entries.put(JSONObject().apply {
-                    put("path", path)
-                    put("mode", baseEntry?.mode ?: headEntry?.mode ?: "100644")
-                    put("type", "blob")
-                    put("sha", headSha ?: JSONObject.NULL)
-                })
-            }
+            if (entry != null) entries.put(entry)
         }
         val baseCommit = JSONObject(request("GET", "/repos/$repository/git/commits/${preview.baseSha}", token))
-        val tree = JSONObject(request("POST", "/repos/$repository/git/trees", token, JSONObject().put("base_tree", baseCommit.getJSONObject("tree").getString("sha")).put("tree", entries)))
+        val tree = JSONObject(request("POST", "/repos/$repository/git/trees", token, JSONObject()
+            .put("base_tree", baseCommit.getJSONObject("tree").getString("sha"))
+            .put("tree", entries)))
         val commit = JSONObject(request("POST", "/repos/$repository/git/commits", token, JSONObject().apply {
             put("message", message.trim())
             put("tree", tree.getString("sha"))
@@ -175,7 +157,15 @@ class GitHubAdvancedGitService {
         request("DELETE", "/repos/$repository/git/refs/heads/${encode(stashBranch)}", token)
     }
 
-    private data class TreeEntry(val sha: String?, val mode: String, val type: String, val size: Long?)
+    private data class TreeEntry(val sha: String?, val mode: String, val type: String, val size: Long?) {
+        fun toJson(path: String) = JSONObject().apply {
+            put("path", path)
+            put("mode", mode)
+            put("type", type)
+            put("sha", sha ?: JSONObject.NULL)
+        }
+    }
+
     private companion object { const val MAX_TEXT_BYTES = 512L * 1024L }
 
     private suspend fun commitTree(repository: String, commitSha: String, token: String): Map<String, TreeEntry> {
@@ -186,7 +176,12 @@ class GitHubAdvancedGitService {
         val items = tree.optJSONArray("tree") ?: JSONArray()
         for (i in 0 until items.length()) {
             val item = items.getJSONObject(i)
-            result[item.getString("path")] = TreeEntry(item.optString("sha").ifBlank { null }, item.optString("mode", "100644"), item.optString("type", "blob"), if (item.has("size")) item.optLong("size") else null)
+            result[item.getString("path")] = TreeEntry(
+                item.optString("sha").ifBlank { null },
+                item.optString("mode", "100644"),
+                item.optString("type", "blob"),
+                if (item.has("size")) item.optLong("size") else null
+            )
         }
         return result
     }
