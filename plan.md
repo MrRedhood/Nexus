@@ -21,8 +21,8 @@
 - 🔄 Tap changed file → editor
 - ⬜ Patch planner
 - ⬜ Conflict detection
-- ⬜ Snapshot/rollback
-- ⬜ Validation/apply/undo
+- ✅ Snapshot/rollback foundation
+- 🔄 Validation/apply/undo
 
 ### 17 AI Coding Agent
 - 🔄 Workspace AI chat
@@ -30,7 +30,7 @@
 - 🔄 AI working/streaming animation
 - 🔄 Pause/cancel AI response
 - 🔄 AI workspace file operations
-- 🔄 AI permission modes: Never / Some / Autonomous
+- ✅ AI permission enforcement: Never / Some / Autonomous
 - ⬜ Full inspect → plan → approve → edit → test → build → verify loop
 - ⬜ Autonomous engineering workflows
 
@@ -75,13 +75,16 @@
 - ✅ Android APK/AAB artifact management
 - ✅ Deterministic CI failure intelligence
 - ✅ Advanced Git operations hardening
+- ✅ Git merge conflict preview/resolution workflow
+- ✅ AI patch execution with validation and snapshot-backed rollback
 - ✅ Focused AI provider settings: Gemini, OpenRouter, DeepInfra, LiteLLM
+- ✅ Lazy pagination for GitHub issues and comments
 - 🔄 GitHub repository discovery and Actions build/artifact foundation
 
 ## Next priority
 
-1. ⬜ Complete Git merge conflict resolution and finish the remaining first-class Git workflow.
-2. ⬜ Complete AI tool permissions + patch/snapshot/rollback integration.
-3. ⬜ Complete task/coding/debug agents.
+1. ⬜ Complete task/coding/debug agents: inspect → plan → approve → edit → test → build → verify.
+2. ⬜ Complete provider error/fallback handling and token/context accounting.
+3. ⬜ Finish patch planner and conflict detection for AI workspace edits.
 
-_Last updated: 2026-08-26 — AI provider selection intentionally limited to Gemini, OpenRouter, DeepInfra, and LiteLLM; CI verification pending._
+_Last updated: 2026-08-27 — CI run #318 passed successfully; next focus is the task/coding/debug agent loop._
