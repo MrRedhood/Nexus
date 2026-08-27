@@ -51,6 +51,7 @@ class NexusEngineeringAgent(private val maxIterations: Int = 5) {
                         if (!result.success && session.task.stage == EngineeringTaskStage.APPROVAL) {
                             val diagnosis = environment.verify("Tests failed: ${result.message}")
                             session.recoveryPlan(environment.plan(session.task.request, diagnosis))
+                            if (session.recoveryLimitReached()) return publish()
                         }
                     }
                     EngineeringTaskStage.BUILD -> {
@@ -59,6 +60,7 @@ class NexusEngineeringAgent(private val maxIterations: Int = 5) {
                         if (!result.success && session.task.stage == EngineeringTaskStage.APPROVAL) {
                             val diagnosis = environment.verify("Build failed: ${result.message}")
                             session.recoveryPlan(environment.plan(session.task.request, diagnosis))
+                            if (session.recoveryLimitReached()) return publish()
                         }
                     }
                     EngineeringTaskStage.VERIFY -> {
