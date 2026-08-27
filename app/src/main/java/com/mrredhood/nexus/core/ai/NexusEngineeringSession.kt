@@ -46,6 +46,8 @@ class NexusEngineeringSession(
         return task
     }
 
+    fun recoveryLimitReached(): Boolean = recoveryAttempts >= maxRecoveryAttempts
+
     fun edited(result: String): EngineeringTask {
         require(task.stage == EngineeringTaskStage.EDIT) { "Editing is not the current workflow stage." }
         task = task.completeStep("Apply planned changes", result)
