@@ -151,101 +151,114 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         send(prompt, context)
     }
 
+    /** Sends immediately when idle; otherwise queues the message FIFO instead of dropping it. */
     fun send(text: String, context: ChatContext = ChatContext()) {
         val rawPrompt = text.trim()
-        if (rawPrompt.isEmpty()) return
+        if (rawPrompt.isEmpty() || workspaceId == null) return
         if (_generating.value) {
-            if (messageQueue.offer(QueuedChatMessage(text = rawPrompt, context = context))) publishQueue()
-            else _error.value = "Message queue is full (20 messages)."
+            val queued = QueuedChatMessage(text = rawPrompt, context = context)
+            if (messageQueue.offer(queued)) {
+                _queue.value = messageQueue.snapshot()
+            } else {
+                _error.value = "Message queue is full (20 messages). Wait for Nexus to finish or stop the current response."
+            }
             return
         }
-        launchSend(rawPrompt, context)
+        processMessage(QueuedChatMessage(text = rawPrompt, context = context))
     }
 
-    private fun launchSend(rawPrompt: String, context: ChatContext) {
-        generationJob?.cancel()
+    private fun processMessage(message: QueuedChatMessage) {
+        val id = workspaceId ?: return
         generationJob = viewModelScope.launch {
-            processMessage(rawPrompt, context)
-            while (true) {
-                val next = messageQueue.poll() ?: break
-                publishQueue()
-                processMessage(next.text, next.context)
+            _error.value = null
+            _actionMessage.value = null
+            _actionProposals.value = emptyList()
+            _actionReviews.value = emptyMap()
+            val rawPrompt = message.text
+            val prompt = normalizeCommand(rawPrompt)
+            inspectContext(prompt, message.context)
+            val settings = NexusSettingsRuntime.current()
+            val previous = _messages.value
+            val history = previous + ChatMessage("user", rawPrompt)
+            val snapshot = _contextSnapshot.value
+            val system = contextBuilder.build(message.context, snapshot) + "\n\n" + WORKSPACE_TOOL_INSTRUCTIONS
+            val assistantIndex = history.size
+            _messages.value = history + ChatMessage("assistant", "")
+            _generating.value = true
+            try {
+                val providerMessages = history.takeLast(40).map { AiMessage(it.role, it.content) }.toMutableList()
+                var finalText = ""
+                var finalResponse: com.mrredhood.nexus.core.ai.AiResponse? = null
+                var round = 0
+                var shouldContinue = true
+                while (shouldContinue && agentLoop.canContinue(round)) {
+                    val request = AiRequest(messages = buildList { add(AiMessage("system", system)); addAll(providerMessages) }, model = "", stream = settings.aiStreaming && round == 0)
+                    val result = if (settings.aiStreaming && round == 0) {
+                        provider.stream(request) { delta -> finalText += delta; updateAssistant(assistantIndex, finalText) }
+                    } else provider.complete(request)
+                    if (!result.success) throw IllegalStateException(result.message.ifBlank { "AI request failed." })
+                    finalResponse = result.response
+                    finalText = result.response?.text ?: result.message
+                    updateAssistant(assistantIndex, NexusActionProtocol.stripProtocol(finalText))
+                    val proposals = NexusActionProtocol.extract(finalText)
+                    _actionProposals.value = proposals
+                    val activeWorkspace = workspace
+                    if (activeWorkspace == null || proposals.isEmpty()) shouldContinue = false
+                    else {
+                        val toolResults = agentLoop.collectReadOnlyResults(activeWorkspace, proposals)
+                        val mutating = proposals.filter { NexusActionPolicy.requiresApproval(it.action) }
+                        if (mutating.isNotEmpty()) { previewMutatingActions(mutating, activeWorkspace); shouldContinue = false }
+                        else if (toolResults.isEmpty()) shouldContinue = false
+                        else {
+                            providerMessages += AiMessage("assistant", finalText)
+                            toolResults.forEach { providerMessages += AiMessage("user", it.asPromptMessage()) }
+                            round++
+                            updateAssistant(assistantIndex, "Inspecting workspace…")
+                        }
+                    }
+                }
+                val current = _messages.value.toMutableList()
+                if (assistantIndex < current.size && current[assistantIndex].role == "assistant") current[assistantIndex] = current[assistantIndex].copy(content = NexusActionProtocol.stripProtocol(finalText))
+                _messages.value = current
+                repository.save(id, current)
+                _tokenUsage.value = TokenUsage(finalResponse?.inputTokens ?: estimateTokens(system + providerMessages.joinToString { it.content }), finalResponse?.outputTokens ?: estimateTokens(finalText))
+            } catch (cancelled: CancellationException) {
+                val current = _messages.value
+                if (current.lastOrNull()?.role == "assistant" && current.last().content.isNotBlank()) repository.save(id, current) else repository.save(id, history)
+                throw cancelled
+            } catch (error: Throwable) {
+                _messages.value = history
+                _error.value = error.message ?: "AI request failed."
+                repository.save(id, history)
+            } finally {
+                _generating.value = false
+                generationJob = null
+                processNextQueuedMessage()
             }
         }
     }
 
-    private suspend fun processMessage(rawPrompt: String, context: ChatContext) {
-        val id = workspaceId ?: return
-        _error.value = null
-        _actionMessage.value = null
-        _actionProposals.value = emptyList()
-        _actionReviews.value = emptyMap()
-        val prompt = normalizeCommand(rawPrompt)
-        inspectContext(prompt, context)
-        val settings = NexusSettingsRuntime.current()
-        val previous = _messages.value
-        val history = previous + ChatMessage("user", rawPrompt)
-        val snapshot = _contextSnapshot.value
-        val system = contextBuilder.build(context, snapshot) + "\n\n" + WORKSPACE_TOOL_INSTRUCTIONS
-        val assistantIndex = history.size
-        _messages.value = history + ChatMessage("assistant", "")
-        _generating.value = true
-        try {
-            val providerMessages = history.takeLast(40).map { AiMessage(it.role, it.content) }.toMutableList()
-            var finalText = ""
-            var finalResponse: com.mrredhood.nexus.core.ai.AiResponse? = null
-            var round = 0
-            var shouldContinue = true
-            while (shouldContinue && agentLoop.canContinue(round)) {
-                val request = AiRequest(messages = buildList { add(AiMessage("system", system)); addAll(providerMessages) }, model = "", stream = settings.aiStreaming && round == 0)
-                val result = if (settings.aiStreaming && round == 0) {
-                    provider.stream(request) { delta -> finalText += delta; updateAssistant(assistantIndex, finalText) }
-                } else provider.complete(request)
-                if (!result.success) throw IllegalStateException(result.message.ifBlank { "AI request failed." })
-                finalResponse = result.response
-                finalText = result.response?.text ?: result.message
-                updateAssistant(assistantIndex, NexusActionProtocol.stripProtocol(finalText))
-                val proposals = NexusActionProtocol.extract(finalText)
-                _actionProposals.value = proposals
-                val activeWorkspace = workspace
-                if (activeWorkspace == null || proposals.isEmpty()) shouldContinue = false
-                else {
-                    val toolResults = agentLoop.collectReadOnlyResults(activeWorkspace, proposals)
-                    val mutating = proposals.filter { NexusActionPolicy.requiresApproval(it.action) }
-                    if (mutating.isNotEmpty()) { previewMutatingActions(mutating, activeWorkspace); shouldContinue = false }
-                    else if (toolResults.isEmpty()) shouldContinue = false
-                    else {
-                        providerMessages += AiMessage("assistant", finalText)
-                        toolResults.forEach { providerMessages += AiMessage("user", it.asPromptMessage()) }
-                        round++
-                        updateAssistant(assistantIndex, "Inspecting workspace…")
-                    }
-                }
-            }
-            val current = _messages.value.toMutableList()
-            if (assistantIndex < current.size && current[assistantIndex].role == "assistant") current[assistantIndex] = current[assistantIndex].copy(content = NexusActionProtocol.stripProtocol(finalText))
-            _messages.value = current
-            repository.save(id, current)
-            _tokenUsage.value = TokenUsage(finalResponse?.inputTokens ?: estimateTokens(system + providerMessages.joinToString { it.content }), finalResponse?.outputTokens ?: estimateTokens(finalText))
-        } catch (cancelled: CancellationException) {
-            val current = _messages.value
-            if (current.lastOrNull()?.role == "assistant" && current.last().content.isNotBlank()) repository.save(id, current) else repository.save(id, history)
-            throw cancelled
-        } catch (error: Throwable) {
-            _messages.value = history
-            _error.value = error.message ?: "AI request failed."
-            repository.save(id, history)
-        } finally { _generating.value = false }
+    private fun processNextQueuedMessage() {
+        val next = messageQueue.poll() ?: run { publishQueue(); return }
+        publishQueue()
+        processMessage(next)
     }
+
+    fun removeQueuedMessage(id: String) {
+        if (messageQueue.remove(id)) publishQueue()
+    }
+
+    fun clearQueue() {
+        messageQueue.clear()
+        publishQueue()
+    }
+
+    private fun publishQueue() { _queue.value = messageQueue.snapshot() }
 
     private fun updateAssistant(index: Int, content: String) {
         val current = _messages.value.toMutableList()
         if (index < current.size && current[index].role == "assistant") { current[index] = current[index].copy(content = content); _messages.value = current }
     }
-
-    private fun publishQueue() { _queue.value = messageQueue.snapshot() }
-    fun removeQueuedMessage(id: String) { if (messageQueue.remove(id)) publishQueue() }
-    fun clearQueue() { messageQueue.clear(); publishQueue() }
 
     private fun normalizeCommand(input: String): String {
         val command = input.substringBefore(' ').lowercase()
