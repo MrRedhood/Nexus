@@ -67,6 +67,7 @@ fun GitHubIssuesScreen(project: NexusProject, onBack: () -> Unit) {
     val scope = rememberCoroutineScope()
     val repository = project.repository.orEmpty()
     val issueListState = rememberLazyListState()
+    val commentListState = rememberLazyListState()
 
     var state by remember { mutableStateOf("open") }
     var issues by remember { mutableStateOf<List<GitHubIssue>>(emptyList()) }
@@ -93,16 +94,15 @@ fun GitHubIssuesScreen(project: NexusProject, onBack: () -> Unit) {
 
     fun token() = tokenStore.get("github")
 
-    fun load(reset: Boolean = true) {
+    fun load() {
         val accessToken = token()
         if (accessToken.isNullOrBlank()) { error = "Add a GitHub token in Settings > GitHub first."; return }
         if (repository.isBlank()) { error = "Connect a GitHub repository to this project first."; return }
         scope.launch {
-            loading = true
-            error = null
+            loading = true; error = null
             runCatching { service.list(repository, accessToken, state, page = 1, limit = ISSUE_PAGE_SIZE) }
                 .onSuccess { page ->
-                    issues = if (reset) page else issues + page
+                    issues = page
                     issuePage = 1
                     hasMoreIssues = page.size == ISSUE_PAGE_SIZE
                     issueListState.scrollToItem(0)
@@ -158,6 +158,7 @@ fun GitHubIssuesScreen(project: NexusProject, onBack: () -> Unit) {
                 comments = firstComments
                 commentPage = 1
                 hasMoreComments = firstComments.size == COMMENT_PAGE_SIZE
+                commentListState.scrollToItem(0)
             }.onFailure { error = it.message ?: "Could not load the issue." }
             loading = false
         }
@@ -189,12 +190,7 @@ fun GitHubIssuesScreen(project: NexusProject, onBack: () -> Unit) {
         scope.launch {
             sending = true; error = null
             runCatching {
-                service.update(
-                    repository, issue.number, accessToken,
-                    title = editTitle, body = editBody,
-                    labels = editLabels.split(',').map { it.trim() }.filter { it.isNotBlank() },
-                    assignees = editAssignees.split(',').map { it.trim() }.filter { it.isNotBlank() }
-                )
+                service.update(repository, issue.number, accessToken, title = editTitle, body = editBody, labels = editLabels.split(',').map { it.trim() }.filter { it.isNotBlank() }, assignees = editAssignees.split(',').map { it.trim() }.filter { it.isNotBlank() })
             }.onSuccess { updated ->
                 selected = updated
                 issues = issues.map { if (it.number == updated.number) updated else it }
@@ -208,9 +204,12 @@ fun GitHubIssuesScreen(project: NexusProject, onBack: () -> Unit) {
     LaunchedEffect(issueListState, issues.size, hasMoreIssues, loading, loadingMoreIssues) {
         snapshotFlow { issueListState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1 }
             .distinctUntilChanged()
-            .collect { lastVisible ->
-                if (lastVisible >= (issues.size - 3).coerceAtLeast(0)) loadMoreIssues()
-            }
+            .collect { lastVisible -> if (lastVisible >= (issues.size - 3).coerceAtLeast(0)) loadMoreIssues() }
+    }
+    LaunchedEffect(commentListState, comments.size, hasMoreComments, loadingMoreComments) {
+        snapshotFlow { commentListState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1 }
+            .distinctUntilChanged()
+            .collect { lastVisible -> if (lastVisible >= (comments.size - 3).coerceAtLeast(0)) loadMoreComments() }
     }
     BackHandler(onBack = onBack)
 
@@ -219,7 +218,7 @@ fun GitHubIssuesScreen(project: NexusProject, onBack: () -> Unit) {
             TopAppBar(
                 title = { Text("Issues") },
                 navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.Outlined.ArrowBack, "Back") } },
-                actions = { IconButton(onClick = { load() }, enabled = !loading) { Icon(Icons.Outlined.Refresh, "Refresh") } }
+                actions = { IconButton(onClick = ::load, enabled = !loading) { Icon(Icons.Outlined.Refresh, "Refresh") } }
             )
         }
     ) { padding ->
@@ -240,7 +239,7 @@ fun GitHubIssuesScreen(project: NexusProject, onBack: () -> Unit) {
             error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
             if (loading) LinearProgressIndicator(Modifier.fillMaxWidth())
 
-            LazyColumn(issueListState, Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            LazyColumn(state = issueListState, modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 if (issues.isEmpty() && !loading) item {
                     Card(Modifier.fillMaxWidth()) { Column(Modifier.padding(20.dp)) { Text("No $state issues", style = MaterialTheme.typography.titleMedium); Text("GitHub returned no issues for this repository and state.", style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 4.dp)) } }
                 }
@@ -255,9 +254,7 @@ fun GitHubIssuesScreen(project: NexusProject, onBack: () -> Unit) {
                         }
                     }
                 }
-                if (loadingMoreIssues) item(key = "issues-loading") {
-                    Row(Modifier.fillMaxWidth().padding(12.dp), horizontalArrangement = Arrangement.Center) { CircularProgressIndicator() }
-                }
+                if (loadingMoreIssues) item(key = "issues-loading") { Row(Modifier.fillMaxWidth().padding(12.dp), horizontalArrangement = Arrangement.Center) { CircularProgressIndicator() } }
                 item { Spacer(Modifier.height(12.dp)) }
             }
         }
@@ -316,16 +313,11 @@ fun GitHubIssuesScreen(project: NexusProject, onBack: () -> Unit) {
                 if (issue.assignees.isNotEmpty()) Text("Assignees: ${issue.assignees.joinToString()}", style = MaterialTheme.typography.bodySmall)
                 if (issue.body.isNotBlank()) Text(issue.body)
                 Text("Conversation", style = MaterialTheme.typography.titleMedium)
-                LazyColumn(Modifier.height(220.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                LazyColumn(state = commentListState, modifier = Modifier.height(220.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     items(comments, key = { it.id }) { comment ->
                         Card(Modifier.fillMaxWidth()) { Column(Modifier.padding(10.dp)) { Text(comment.author, style = MaterialTheme.typography.labelMedium); Text(comment.body, style = MaterialTheme.typography.bodySmall) } }
                     }
-                    if (loadingMoreComments) item(key = "comments-loading") {
-                        Row(Modifier.fillMaxWidth().padding(8.dp), horizontalArrangement = Arrangement.Center) { CircularProgressIndicator() }
-                    }
-                }
-                LaunchedEffect(comments.size, hasMoreComments, loadingMoreComments) {
-                    if (hasMoreComments && !loadingMoreComments) loadMoreComments()
+                    if (loadingMoreComments) item(key = "comments-loading") { Row(Modifier.fillMaxWidth().padding(8.dp), horizontalArrangement = Arrangement.Center) { CircularProgressIndicator() } }
                 }
                 OutlinedTextField(composer, { composer = it }, label = { Text("Reply to this issue") }, minLines = 3, modifier = Modifier.fillMaxWidth())
             } },
