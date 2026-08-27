@@ -51,44 +51,6 @@ jobs:
         with:
           gradle-version: "8.11.1"
 
-      - name: Integrate project file tree and AI floating button
-        run: |
-          python3 - <<'PY'
-          from pathlib import Path
-          p = Path("app/src/main/java/com/mrredhood/nexus/MainActivity.kt")
-          s = p.read_text()
-
-          if "import kotlinx.coroutines.launch" not in s:
-              s = s.replace(
-                  "import com.mrredhood.nexus.core.workspace.WorkspaceEntry\n",
-                  "import com.mrredhood.nexus.core.workspace.WorkspaceEntry\nimport kotlinx.coroutines.launch\n"
-              )
-
-          old_actions = 'IconButton(onClick = { showGit = true }) { Icon(Icons.Outlined.Source, "Source control") }; IconButton(onClick = { showAiChat = true }) { Icon(Icons.Outlined.AutoAwesome, "AI chat") }; IconButton(onClick = { vm.refresh(workspace) })'
-          new_actions = 'IconButton(onClick = { showGit = true }) { Icon(Icons.Outlined.Source, "Source control") }; IconButton(onClick = { vm.refresh(workspace) })'
-          s = s.replace(old_actions, new_actions, 1)
-
-          ai_card = '            Card(Modifier.fillMaxWidth().padding(top = 10.dp), shape = MaterialTheme.shapes.large, colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHighest), onClick = { showAiChat = true }) { Row(Modifier.fillMaxWidth().padding(16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) { Icon(Icons.Outlined.AutoAwesome, "AI chat"); Column(Modifier.weight(1f)) { Text("Ask Nexus AI", style = MaterialTheme.typography.titleMedium); Text("Analyze, search, explain, fix, refactor or edit this workspace", style = MaterialTheme.typography.bodySmall) }; Icon(Icons.Outlined.ChevronRight, null) } }\n'
-          s = s.replace(ai_card, '', 1)
-
-          scaffold_end = '    }\n    }\n    createDialog?.let { type ->'
-          replacement = '        }, floatingActionButton = {\n            FloatingActionButton(onClick = { showAiChat = true }) {\n                Icon(Icons.Outlined.AutoAwesome, "AI chat")\n            }\n        })\n    }\n    createDialog?.let { type ->'
-          if scaffold_end not in s:
-              raise SystemExit("Workspace scaffold end marker not found")
-          s = s.replace(scaffold_end, replacement, 1)
-
-          p.write_text(s)
-          PY
-          if git diff --quiet -- app/src/main/java/com/mrredhood/nexus/MainActivity.kt; then
-            echo "UI integration already applied"
-            exit 0
-          fi
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add app/src/main/java/com/mrredhood/nexus/MainActivity.kt
-          git commit -m "fix(ui): stabilize project tree and add AI FAB"
-          git push
-
       - name: Assemble APK
         if: env.BUILD_TARGET == 'debug' || env.BUILD_TARGET == 'release'
         run: gradle --no-daemon --stacktrace assemble${BUILD_TARGET^}
