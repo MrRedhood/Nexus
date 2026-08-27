@@ -8,8 +8,8 @@ import kotlinx.coroutines.CancellationException
  * are supplied by the caller so this core remains independent of UI.
  *
  * maxIterations limits recovery cycles, not individual workflow stages. A normal
- * inspect -> plan -> approve -> edit -> test -> build -> verify run must always
- * be able to traverse the complete loop.
+ * inspect -> plan -> approve -> edit -> test -> build -> verify run can always
+ * traverse the complete loop.
  */
 class NexusEngineeringAgent(private val maxIterations: Int = 5) {
     suspend fun run(
@@ -41,9 +41,7 @@ class NexusEngineeringAgent(private val maxIterations: Int = 5) {
                         if (!EngineeringTaskGate.canAdvance(task, permissionMode)) {
                             return publish(task.fail("Engineering task requires approval, but AI permission is set to Never."))
                         }
-                        if (permissionMode.equals("some", true)) {
-                            return publish(task)
-                        }
+                        if (permissionMode.equals("some", true)) return publish(task)
                         task.approve()
                     }
                     EngineeringTaskStage.EDIT -> {
@@ -60,12 +58,7 @@ class NexusEngineeringAgent(private val maxIterations: Int = 5) {
                             val diagnosis = environment.verify("Tests failed: ${result.message}")
                             val nextPlan = environment.plan(task.request, diagnosis)
                             if (recoveryAttempts > maxIterations) {
-                                task.copy(
-                                    stage = EngineeringTaskStage.APPROVAL,
-                                    plan = nextPlan,
-                                    lastResult = result.message,
-                                    error = null
-                                )
+                                task.fail("Engineering task exceeded its test-recovery limit: ${result.message}")
                             } else {
                                 task.copy(
                                     stage = EngineeringTaskStage.APPROVAL,
@@ -84,20 +77,23 @@ class NexusEngineeringAgent(private val maxIterations: Int = 5) {
                             recoveryAttempts++
                             val diagnosis = environment.verify("Build failed: ${result.message}")
                             val nextPlan = environment.plan(task.request, diagnosis)
-                            task.copy(
-                                stage = EngineeringTaskStage.APPROVAL,
-                                plan = nextPlan,
-                                lastResult = result.message,
-                                error = null
-                            )
+                            if (recoveryAttempts > maxIterations) {
+                                task.fail("Engineering task exceeded its build-recovery limit: ${result.message}")
+                            } else {
+                                task.copy(
+                                    stage = EngineeringTaskStage.APPROVAL,
+                                    plan = nextPlan,
+                                    lastResult = result.message,
+                                    error = null
+                                )
+                            }
                         } else {
                             task.completeStep("Build project", result.message)
                         }
                     }
                     EngineeringTaskStage.VERIFY -> {
                         val result = environment.verify(task.lastResult.orEmpty())
-                        if (result.isBlank()) task.completeStep("Verify results", "Verification completed.")
-                        else task.completeStep("Verify results", result)
+                        task.completeStep("Verify results", if (result.isBlank()) "Verification completed." else result)
                     }
                     else -> task
                 }
