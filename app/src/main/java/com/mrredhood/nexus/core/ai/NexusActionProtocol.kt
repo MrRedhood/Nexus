@@ -69,7 +69,16 @@ object NexusActionProtocol {
         require(type != "patch_file" || patch != null) { "patch_file requires patch" }
         NexusActionProposal(
             id = json.optString("id").takeIf { it.isNotBlank() } ?: UUID.randomUUID().toString(),
-            action = NexusAction(type, path, destination, newName, mimeType, content, patch, expectedHash)
+            action = NexusAction(
+                type = type,
+                path = path,
+                destination = destination,
+                newName = newName,
+                mimeType = mimeType,
+                content = content,
+                patch = patch,
+                expectedHash = expectedHash
+            )
         )
     }.getOrNull()
 }
