@@ -53,7 +53,7 @@ data class AgentToolResult(
         append("[NEXUS TOOL RESULT]\n")
         append("Action: ").append(action.type).append('\n')
         action.path?.let { append("Path: ").append(it).append('\n') }
-        append("Success: ").append(result.success).append('\n")
+        append("Success: ").append(result.success).append('\n')
         append("Message: ").append(result.message).append('\n')
         result.output?.let {
             append("Output:\n")
