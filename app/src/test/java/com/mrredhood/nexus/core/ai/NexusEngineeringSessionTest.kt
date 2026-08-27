@@ -54,6 +54,8 @@ class NexusEngineeringSessionTest {
         assertEquals(EngineeringTaskStage.APPROVAL, result.stage)
         assertEquals("Tests failed: unit test failed", result.lastResult)
         assertTrue(result.plan.isEmpty())
+        session.recoveryPlan(listOf("fix failing test"))
+        assertEquals(listOf("fix failing test"), session.task.plan)
     }
 
     @Test
@@ -64,7 +66,7 @@ class NexusEngineeringSessionTest {
         session.approve("autonomous")
         session.edited("changes applied")
         session.tested(EngineeringCommandResult(false, "first failure"))
-        session.planned(listOf("retry fix"))
+        session.recoveryPlan(listOf("retry fix"))
         session.approve("autonomous")
         session.edited("retry applied")
 
