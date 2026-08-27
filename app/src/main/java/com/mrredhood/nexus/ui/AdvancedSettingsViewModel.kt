@@ -5,9 +5,9 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.mrredhood.nexus.core.ai.AiModel
 import com.mrredhood.nexus.core.ai.AiProviderService
+import com.mrredhood.nexus.core.ai.AiProviderSettingsRepository
 import com.mrredhood.nexus.core.ai.ModelCatalog
 import com.mrredhood.nexus.core.settings.AdvancedSettingsRepository
-import com.mrredhood.nexus.core.settings.ApiKeyStore
 import com.mrredhood.nexus.core.settings.NexusFeatureSettings
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -16,9 +16,10 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
+/** View-model boundary for the AI provider settings UI. GitHub/Copilot credentials are not exposed here. */
 class AdvancedSettingsViewModel(application: Application) : AndroidViewModel(application) {
     private val repository = AdvancedSettingsRepository(application.applicationContext)
-    private val apiKeys = ApiKeyStore(application.applicationContext)
+    private val providerSettings = AiProviderSettingsRepository(application.applicationContext)
     private val aiService = AiProviderService(application.applicationContext)
     private val catalog = ModelCatalog(application.applicationContext)
 
@@ -33,25 +34,25 @@ class AdvancedSettingsViewModel(application: Application) : AndroidViewModel(app
     fun update(transform: (NexusFeatureSettings) -> NexusFeatureSettings) { viewModelScope.launch { repository.update(transform) } }
 
     fun saveApiKey(provider: String, apiKey: String) {
-        apiKeys.put(provider, apiKey.trim())
-        update { it.copy(apiKeyConfigured = apiKeys.has(provider)) }
+        providerSettings.saveApiKey(provider, apiKey)
+        update { it.copy(apiKeyConfigured = providerSettings.hasApiKey(provider)) }
         loadModels(provider)
     }
 
     fun clearApiKey(provider: String) {
-        apiKeys.remove(provider)
+        providerSettings.removeApiKey(provider)
         update { it.copy(apiKeyConfigured = false, model = "default") }
         _models.value = emptyList()
     }
 
-    fun hasApiKey(provider: String): Boolean = apiKeys.has(provider)
+    fun hasApiKey(provider: String): Boolean = providerSettings.hasApiKey(provider)
 
     fun loadModels(provider: String = settings.value.provider) {
         viewModelScope.launch {
             _loadingModels.value = true
             _modelError.value = null
             try {
-                if (!apiKeys.has(provider)) { _models.value = emptyList(); return@launch }
+                if (!providerSettings.hasApiKey(provider)) { _models.value = emptyList(); return@launch }
                 val models = catalog.load(provider)
                 _models.value = models
                 if (models.isEmpty()) _modelError.value = "No models were returned by $provider. Check the API key or endpoint."
@@ -62,5 +63,10 @@ class AdvancedSettingsViewModel(application: Application) : AndroidViewModel(app
         }
     }
 
-    fun testConnection(onResult: (Boolean, String) -> Unit) { viewModelScope.launch { val result = aiService.testConnection(); onResult(result.success, result.message) } }
+    fun testConnection(onResult: (Boolean, String) -> Unit) {
+        viewModelScope.launch {
+            val result = aiService.testConnection()
+            onResult(result.success, result.message)
+        }
+    }
 }
