@@ -155,7 +155,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         val rawPrompt = text.trim()
         if (rawPrompt.isEmpty()) return
         if (_generating.value) {
-            if (messageQueue.offer(rawPrompt, context)) publishQueue()
+            if (messageQueue.offer(QueuedChatMessage(text = rawPrompt, context = context))) publishQueue()
             else _error.value = "Message queue is full (20 messages)."
             return
         }
@@ -243,7 +243,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         if (index < current.size && current[index].role == "assistant") { current[index] = current[index].copy(content = content); _messages.value = current }
     }
 
-    private fun publishQueue() { _queue.value = messageQueue.items() }
+    private fun publishQueue() { _queue.value = messageQueue.snapshot() }
     fun removeQueuedMessage(id: String) { if (messageQueue.remove(id)) publishQueue() }
     fun clearQueue() { messageQueue.clear(); publishQueue() }
 
