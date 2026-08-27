@@ -62,12 +62,28 @@ object NexusActionProtocol {
         val content = json.optString("content").takeIf { json.has("content") }
         val patch = json.optString("patch").takeIf { json.has("patch") }
         val expectedHash = json.optString("expectedHash").trim().takeIf { it.isNotBlank() }
+        buildProposal(json, type, path, destination, newName, mimeType, content, patch, expectedHash)
+    }.recoverCatching {
+        parsePayloadFallback(payload) ?: throw IllegalArgumentException("Invalid Nexus action payload")
+    }.getOrNull()
+
+    private fun buildProposal(
+        json: JSONObject,
+        type: String,
+        path: String?,
+        destination: String?,
+        newName: String?,
+        mimeType: String?,
+        content: String?,
+        patch: String?,
+        expectedHash: String?
+    ): NexusActionProposal {
         require(type == "list_files" || path != null) { "$type requires a path" }
         require(type !in setOf("copy_file", "move_file") || destination != null) { "$type requires destination" }
         require(type != "rename_file" || newName != null) { "rename_file requires newName" }
         require(type != "replace_file" || content != null) { "replace_file requires content" }
         require(type != "patch_file" || patch != null) { "patch_file requires patch" }
-        NexusActionProposal(
+        return NexusActionProposal(
             id = json.optString("id").takeIf { it.isNotBlank() } ?: UUID.randomUUID().toString(),
             action = NexusAction(
                 type = type,
@@ -80,7 +96,50 @@ object NexusActionProtocol {
                 expectedHash = expectedHash
             )
         )
-    }.getOrNull()
+    }
+
+    /**
+     * Conservative fallback for action payloads containing escaped/control characters that
+     * older Android JSON implementations may reject. It only accepts the same required fields
+     * as the normal JSON parser and never broadens the allowed action set.
+     */
+    private fun parsePayloadFallback(payload: String): NexusActionProposal? {
+        fun stringField(name: String): String? {
+            val pattern = Regex("\\\"${Regex.escape(name)}\\\"\\s*:\\s*\\\"((?:\\\\.|[^\\\"])*)\\\"")
+            val raw = pattern.find(payload)?.groupValues?.get(1) ?: return null
+            return runCatching { JSONObject("{\\\"value\\\":\\\"$raw\\\"}").getString("value") }.getOrNull()
+        }
+
+        val type = stringField("type")?.trim()?.takeIf { it in allowedTypes } ?: return null
+        val path = stringField("path")?.trim()?.takeIf { it.isNotBlank() }
+        val destination = stringField("destination")?.trim()?.takeIf { it.isNotBlank() }
+        val newName = stringField("newName")?.trim()?.takeIf { it.isNotBlank() }
+        val mimeType = stringField("mimeType")?.trim()?.takeIf { it.isNotBlank() }
+        val content = stringField("content")
+        val patch = stringField("patch")
+        val expectedHash = stringField("expectedHash")?.trim()?.takeIf { it.isNotBlank() }
+        val id = stringField("id")?.takeIf { it.isNotBlank() } ?: UUID.randomUUID().toString()
+
+        require(type == "list_files" || path != null) { "$type requires a path" }
+        require(type !in setOf("copy_file", "move_file") || destination != null) { "$type requires destination" }
+        require(type != "rename_file" || newName != null) { "rename_file requires newName" }
+        require(type != "replace_file" || content != null) { "replace_file requires content" }
+        require(type != "patch_file" || patch != null) { "patch_file requires patch" }
+
+        return NexusActionProposal(
+            id = id,
+            action = NexusAction(
+                type = type,
+                path = path,
+                destination = destination,
+                newName = newName,
+                mimeType = mimeType,
+                content = content,
+                patch = patch,
+                expectedHash = expectedHash
+            )
+        )
+    }
 }
 
 data class NexusAction(
