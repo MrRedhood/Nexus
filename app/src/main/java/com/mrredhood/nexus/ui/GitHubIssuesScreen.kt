@@ -13,9 +13,9 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.ArrowBack
-import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.OpenInNew
 import androidx.compose.material.icons.outlined.Refresh
@@ -43,6 +43,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
@@ -51,7 +52,11 @@ import com.mrredhood.nexus.core.settings.ApiKeyStore
 import com.mrredhood.nexus.core.workspace.GitHubIssue
 import com.mrredhood.nexus.core.workspace.GitHubIssueComment
 import com.mrredhood.nexus.core.workspace.GitHubIssueService
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
+
+private const val ISSUE_PAGE_SIZE = 25
+private const val COMMENT_PAGE_SIZE = 50
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -61,11 +66,18 @@ fun GitHubIssuesScreen(project: NexusProject, onBack: () -> Unit) {
     val service = remember { GitHubIssueService() }
     val scope = rememberCoroutineScope()
     val repository = project.repository.orEmpty()
+    val issueListState = rememberLazyListState()
 
     var state by remember { mutableStateOf("open") }
     var issues by remember { mutableStateOf<List<GitHubIssue>>(emptyList()) }
+    var issuePage by remember { mutableStateOf(1) }
+    var hasMoreIssues by remember { mutableStateOf(false) }
+    var loadingMoreIssues by remember { mutableStateOf(false) }
     var selected by remember { mutableStateOf<GitHubIssue?>(null) }
     var comments by remember { mutableStateOf<List<GitHubIssueComment>>(emptyList()) }
+    var commentPage by remember { mutableStateOf(1) }
+    var hasMoreComments by remember { mutableStateOf(false) }
+    var loadingMoreComments by remember { mutableStateOf(false) }
     var composer by remember { mutableStateOf("") }
     var createTitle by remember { mutableStateOf("") }
     var createBody by remember { mutableStateOf("") }
@@ -81,16 +93,58 @@ fun GitHubIssuesScreen(project: NexusProject, onBack: () -> Unit) {
 
     fun token() = tokenStore.get("github")
 
-    fun load() {
+    fun load(reset: Boolean = true) {
         val accessToken = token()
         if (accessToken.isNullOrBlank()) { error = "Add a GitHub token in Settings > GitHub first."; return }
         if (repository.isBlank()) { error = "Connect a GitHub repository to this project first."; return }
         scope.launch {
-            loading = true; error = null
-            runCatching { service.list(repository, accessToken, state) }
-                .onSuccess { issues = it }
+            loading = true
+            error = null
+            runCatching { service.list(repository, accessToken, state, page = 1, limit = ISSUE_PAGE_SIZE) }
+                .onSuccess { page ->
+                    issues = if (reset) page else issues + page
+                    issuePage = 1
+                    hasMoreIssues = page.size == ISSUE_PAGE_SIZE
+                    issueListState.scrollToItem(0)
+                }
                 .onFailure { error = it.message ?: "Could not load GitHub issues." }
             loading = false
+        }
+    }
+
+    fun loadMoreIssues() {
+        if (loading || loadingMoreIssues || !hasMoreIssues) return
+        val accessToken = token() ?: return
+        if (repository.isBlank()) return
+        scope.launch {
+            loadingMoreIssues = true
+            runCatching { service.list(repository, accessToken, state, page = issuePage + 1, limit = ISSUE_PAGE_SIZE) }
+                .onSuccess { page ->
+                    if (page.isNotEmpty()) {
+                        issues = issues + page.filterNot { incoming -> issues.any { it.number == incoming.number } }
+                        issuePage += 1
+                    }
+                    hasMoreIssues = page.size == ISSUE_PAGE_SIZE
+                }
+                .onFailure { error = it.message ?: "Could not load more issues." }
+            loadingMoreIssues = false
+        }
+    }
+
+    fun loadMoreComments() {
+        if (loadingMoreComments || !hasMoreComments) return
+        val issue = selected ?: return
+        val accessToken = token() ?: return
+        scope.launch {
+            loadingMoreComments = true
+            runCatching { service.comments(repository, issue.number, accessToken, page = commentPage + 1, limit = COMMENT_PAGE_SIZE) }
+                .onSuccess { page ->
+                    comments = comments + page.filterNot { incoming -> comments.any { it.id == incoming.id } }
+                    commentPage += 1
+                    hasMoreComments = page.size == COMMENT_PAGE_SIZE
+                }
+                .onFailure { error = it.message ?: "Could not load more comments." }
+            loadingMoreComments = false
         }
     }
 
@@ -100,7 +154,10 @@ fun GitHubIssuesScreen(project: NexusProject, onBack: () -> Unit) {
             loading = true; error = null
             runCatching {
                 selected = service.get(repository, issue.number, accessToken)
-                comments = service.comments(repository, issue.number, accessToken)
+                val firstComments = service.comments(repository, issue.number, accessToken, page = 1, limit = COMMENT_PAGE_SIZE)
+                comments = firstComments
+                commentPage = 1
+                hasMoreComments = firstComments.size == COMMENT_PAGE_SIZE
             }.onFailure { error = it.message ?: "Could not load the issue." }
             loading = false
         }
@@ -133,11 +190,8 @@ fun GitHubIssuesScreen(project: NexusProject, onBack: () -> Unit) {
             sending = true; error = null
             runCatching {
                 service.update(
-                    repository,
-                    issue.number,
-                    accessToken,
-                    title = editTitle,
-                    body = editBody,
+                    repository, issue.number, accessToken,
+                    title = editTitle, body = editBody,
                     labels = editLabels.split(',').map { it.trim() }.filter { it.isNotBlank() },
                     assignees = editAssignees.split(',').map { it.trim() }.filter { it.isNotBlank() }
                 )
@@ -151,6 +205,13 @@ fun GitHubIssuesScreen(project: NexusProject, onBack: () -> Unit) {
     }
 
     LaunchedEffect(repository, state) { load() }
+    LaunchedEffect(issueListState, issues.size, hasMoreIssues, loading, loadingMoreIssues) {
+        snapshotFlow { issueListState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1 }
+            .distinctUntilChanged()
+            .collect { lastVisible ->
+                if (lastVisible >= (issues.size - 3).coerceAtLeast(0)) loadMoreIssues()
+            }
+    }
     BackHandler(onBack = onBack)
 
     Scaffold(
@@ -158,7 +219,7 @@ fun GitHubIssuesScreen(project: NexusProject, onBack: () -> Unit) {
             TopAppBar(
                 title = { Text("Issues") },
                 navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.Outlined.ArrowBack, "Back") } },
-                actions = { IconButton(onClick = ::load, enabled = !loading) { Icon(Icons.Outlined.Refresh, "Refresh") } }
+                actions = { IconButton(onClick = { load() }, enabled = !loading) { Icon(Icons.Outlined.Refresh, "Refresh") } }
             )
         }
     ) { padding ->
@@ -167,7 +228,7 @@ fun GitHubIssuesScreen(project: NexusProject, onBack: () -> Unit) {
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     Text("GitHub Issues", style = MaterialTheme.typography.titleLarge)
                     Text(repository.ifBlank { "No repository connected" }, style = MaterialTheme.typography.bodyMedium)
-                    Text("Live repository issues with create, edit, close, reopen, labels, assignees, and comments.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("Issues are loaded in small pages as you scroll to keep large repositories responsive.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -179,7 +240,7 @@ fun GitHubIssuesScreen(project: NexusProject, onBack: () -> Unit) {
             error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
             if (loading) LinearProgressIndicator(Modifier.fillMaxWidth())
 
-            LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            LazyColumn(issueListState, Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 if (issues.isEmpty() && !loading) item {
                     Card(Modifier.fillMaxWidth()) { Column(Modifier.padding(20.dp)) { Text("No $state issues", style = MaterialTheme.typography.titleMedium); Text("GitHub returned no issues for this repository and state.", style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 4.dp)) } }
                 }
@@ -193,6 +254,9 @@ fun GitHubIssuesScreen(project: NexusProject, onBack: () -> Unit) {
                             if (issue.body.isNotBlank()) Text(issue.body.trim(), maxLines = 3, style = MaterialTheme.typography.bodySmall)
                         }
                     }
+                }
+                if (loadingMoreIssues) item(key = "issues-loading") {
+                    Row(Modifier.fillMaxWidth().padding(12.dp), horizontalArrangement = Arrangement.Center) { CircularProgressIndicator() }
                 }
                 item { Spacer(Modifier.height(12.dp)) }
             }
@@ -256,6 +320,12 @@ fun GitHubIssuesScreen(project: NexusProject, onBack: () -> Unit) {
                     items(comments, key = { it.id }) { comment ->
                         Card(Modifier.fillMaxWidth()) { Column(Modifier.padding(10.dp)) { Text(comment.author, style = MaterialTheme.typography.labelMedium); Text(comment.body, style = MaterialTheme.typography.bodySmall) } }
                     }
+                    if (loadingMoreComments) item(key = "comments-loading") {
+                        Row(Modifier.fillMaxWidth().padding(8.dp), horizontalArrangement = Arrangement.Center) { CircularProgressIndicator() }
+                    }
+                }
+                LaunchedEffect(comments.size, hasMoreComments, loadingMoreComments) {
+                    if (hasMoreComments && !loadingMoreComments) loadMoreComments()
                 }
                 OutlinedTextField(composer, { composer = it }, label = { Text("Reply to this issue") }, minLines = 3, modifier = Modifier.fillMaxWidth())
             } },
