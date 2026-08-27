@@ -3,8 +3,7 @@ package com.mrredhood.nexus.core.ai
 /**
  * Event-driven engineering workflow used by the real chat/action pipeline.
  *
- * Unlike NexusEngineeringAgent, which is useful for fully supplied environments,
- * this session can pause at approval and resume when the UI actually executes an
+ * This session can pause at approval and resume when the UI actually executes an
  * action or receives CI results. It never invents test/build success.
  */
 class NexusEngineeringSession(
@@ -36,6 +35,14 @@ class NexusEngineeringSession(
             return task
         }
         task = task.approve()
+        return task
+    }
+
+    /** Installs a recovery plan after a failed test/build while retaining the approval gate. */
+    fun recoveryPlan(steps: List<String>): EngineeringTask {
+        require(task.stage == EngineeringTaskStage.APPROVAL) { "Task is not waiting for a recovery plan." }
+        require(steps.any { it.isNotBlank() }) { "Recovery plan must contain at least one step." }
+        task = task.copy(plan = steps.filter { it.isNotBlank() }, error = null)
         return task
     }
 
