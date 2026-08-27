@@ -17,19 +17,10 @@ class WorkspaceFileSystem(private val context: Context) {
         val normalized = normalize(relativeDirectory)
         val directory = resolveDocument(workspace, normalized)
         require(directory.isDirectory) { "Not a directory: ${normalized.ifEmpty { "/" }}" }
-        directory.listFiles()
-            .mapNotNull { file ->
-                val name = file.name?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
-                WorkspaceEntry(
-                    relativePath = join(normalized, name),
-                    name = name,
-                    type = if (file.isDirectory) EntryType.DIRECTORY else EntryType.FILE,
-                    sizeBytes = if (file.isFile) file.length().coerceAtLeast(0L) else 0L,
-                    lastModified = file.lastModified().coerceAtLeast(0L),
-                    mimeType = file.type
-                )
-            }
-            .sortedWith(compareBy<WorkspaceEntry> { it.type != EntryType.DIRECTORY }.thenBy(String.CASE_INSENSITIVE_ORDER) { it.name })
+        directory.listFiles().mapNotNull { file ->
+            val name = file.name?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+            WorkspaceEntry(relativePath = join(normalized, name), name = name, type = if (file.isDirectory) EntryType.DIRECTORY else EntryType.FILE, sizeBytes = if (file.isFile) file.length().coerceAtLeast(0L) else 0L, lastModified = file.lastModified().coerceAtLeast(0L), mimeType = file.type)
+        }.sortedWith(compareBy<WorkspaceEntry> { it.type != EntryType.DIRECTORY }.thenBy(String.CASE_INSENSITIVE_ORDER) { it.name })
     }
 
     suspend fun read(workspace: Workspace, relativePath: String): WorkspaceFile = withContext(Dispatchers.IO) {
@@ -37,21 +28,35 @@ class WorkspaceFileSystem(private val context: Context) {
         val document = resolveDocument(workspace, normalized)
         require(document.isFile) { "Not a file: $normalized" }
         val size = document.length().coerceAtLeast(0L)
-        require(size <= MAX_EDITABLE_FILE_BYTES) {
-            "File is too large to edit in Nexus (${formatBytes(size)}). Maximum supported size is ${formatBytes(MAX_EDITABLE_FILE_BYTES)}."
-        }
-        val bytes = resolver.openInputStream(document.uri)?.use { it.readBytes() }
-            ?: throw IOException("Unable to open file: $normalized")
-        require(bytes.size.toLong() <= MAX_EDITABLE_FILE_BYTES) { "File changed while reading and is too large to edit" }
+        require(size <= MAX_EDITABLE_FILE_BYTES) { "File is too large to edit in Nexus (${formatBytes(size)}). Maximum supported size is ${formatBytes(MAX_EDITABLE_FILE_BYTES)}." }
+        val bytes = readBytesInternal(document, normalized)
         val content = bytes.toString(Charsets.UTF_8)
         WorkspaceFile(normalized, document.name ?: leaf(normalized), content, bytes.size.toLong(), document.lastModified().coerceAtLeast(0L), document.type)
     }
 
-    suspend fun write(workspace: Workspace, relativePath: String, content: String, mimeType: String = "text/plain"): WorkspaceFile =
-        writeInternal(workspace, relativePath, content, mimeType, null)
+    suspend fun readBytes(workspace: Workspace, relativePath: String): ByteArray = withContext(Dispatchers.IO) {
+        val normalized = requireFilePath(relativePath)
+        val document = resolveDocument(workspace, normalized)
+        require(document.isFile) { "Not a file: $normalized" }
+        val size = document.length().coerceAtLeast(0L)
+        require(size <= MAX_EDITABLE_FILE_BYTES) { "File is too large for Nexus sync (${formatBytes(size)}). Maximum supported size is ${formatBytes(MAX_EDITABLE_FILE_BYTES)}." }
+        readBytesInternal(document, normalized)
+    }
 
-    suspend fun writeIfUnchanged(workspace: Workspace, relativePath: String, content: String, mimeType: String, expectedSizeBytes: Long, expectedLastModified: Long): WorkspaceFile =
-        writeInternal(workspace, relativePath, content, mimeType, expectedSizeBytes to expectedLastModified)
+    suspend fun write(workspace: Workspace, relativePath: String, content: String, mimeType: String = "text/plain"): WorkspaceFile = writeInternal(workspace, relativePath, content, mimeType, null)
+
+    suspend fun writeBytes(workspace: Workspace, relativePath: String, bytes: ByteArray, mimeType: String = "application/octet-stream") = withContext(Dispatchers.IO) {
+        val normalized = requireFilePath(relativePath)
+        require(bytes.size.toLong() <= MAX_EDITABLE_FILE_BYTES) { "File is too large for Nexus sync (${formatBytes(bytes.size.toLong())})." }
+        val parent = ensureDirectory(workspace, parent(normalized))
+        val name = leaf(normalized)
+        val existing = parent.findFile(name)
+        require(existing == null || existing.isFile) { "Path is a directory: $normalized" }
+        val target = existing ?: parent.createFile(safeMimeType(mimeType), name) ?: throw IOException("Unable to create file: $normalized")
+        resolver.openOutputStream(target.uri, "wt")?.use { it.write(bytes) } ?: throw IOException("Unable to write file: $normalized")
+    }
+
+    suspend fun writeIfUnchanged(workspace: Workspace, relativePath: String, content: String, mimeType: String, expectedSizeBytes: Long, expectedLastModified: Long): WorkspaceFile = writeInternal(workspace, relativePath, content, mimeType, expectedSizeBytes to expectedLastModified)
 
     private suspend fun writeInternal(workspace: Workspace, relativePath: String, content: String, mimeType: String, expected: Pair<Long, Long>?): WorkspaceFile = withContext(Dispatchers.IO) {
         val normalized = requireFilePath(relativePath)
@@ -61,81 +66,55 @@ class WorkspaceFileSystem(private val context: Context) {
         require(existing == null || existing.isFile) { "Path is a directory: $normalized" }
         if (expected != null) {
             require(existing != null) { "File was deleted or replaced while editing: $normalized" }
-            val currentSize = existing.length().coerceAtLeast(0L)
-            val currentModified = existing.lastModified().coerceAtLeast(0L)
-            require(currentSize == expected.first && currentModified == expected.second) {
-                "File changed outside Nexus while editing: $normalized. Reload it before saving."
-            }
+            require(existing.length().coerceAtLeast(0L) == expected.first && existing.lastModified().coerceAtLeast(0L) == expected.second) { "File changed outside Nexus while editing: $normalized. Reload it before saving." }
         }
         val bytes = content.toByteArray(Charsets.UTF_8)
-        require(bytes.size.toLong() <= MAX_EDITABLE_FILE_BYTES) {
-            "Edited content is too large (${formatBytes(bytes.size.toLong())}). Maximum supported size is ${formatBytes(MAX_EDITABLE_FILE_BYTES)}."
-        }
-        val target = existing ?: parent.createFile(safeMimeType(mimeType), name)
-            ?: throw IOException("Unable to create file: $normalized")
-        resolver.openOutputStream(target.uri, "wt")?.use { it.write(bytes) }
-            ?: throw IOException("Unable to write file: $normalized")
+        require(bytes.size.toLong() <= MAX_EDITABLE_FILE_BYTES) { "Edited content is too large (${formatBytes(bytes.size.toLong())})." }
+        val target = existing ?: parent.createFile(safeMimeType(mimeType), name) ?: throw IOException("Unable to create file: $normalized")
+        resolver.openOutputStream(target.uri, "wt")?.use { it.write(bytes) } ?: throw IOException("Unable to write file: $normalized")
         WorkspaceFile(normalized, target.name ?: name, content, bytes.size.toLong(), target.lastModified().coerceAtLeast(0L), target.type ?: safeMimeType(mimeType))
     }
 
     suspend fun createFile(workspace: Workspace, relativePath: String, mimeType: String = "text/plain"): WorkspaceFile = withContext(Dispatchers.IO) {
-        val normalized = requireFilePath(relativePath)
-        val parent = ensureDirectory(workspace, parent(normalized))
-        val name = leaf(normalized)
+        val normalized = requireFilePath(relativePath); val parent = ensureDirectory(workspace, parent(normalized)); val name = leaf(normalized)
         require(parent.findFile(name) == null) { "Path already exists: $normalized" }
         val target = parent.createFile(safeMimeType(mimeType), name) ?: throw IOException("Unable to create file: $normalized")
         WorkspaceFile(normalized, target.name ?: name, "", 0L, target.lastModified().coerceAtLeast(0L), target.type ?: safeMimeType(mimeType))
     }
 
     suspend fun createDirectory(workspace: Workspace, relativePath: String): WorkspaceEntry = withContext(Dispatchers.IO) {
-        val normalized = requireDirectoryPath(relativePath)
-        val parent = ensureDirectory(workspace, parent(normalized))
-        val name = leaf(normalized)
+        val normalized = requireDirectoryPath(relativePath); val parent = ensureDirectory(workspace, parent(normalized)); val name = leaf(normalized)
         require(parent.findFile(name) == null) { "Path already exists: $normalized" }
         val target = parent.createDirectory(name) ?: throw IOException("Unable to create directory: $normalized")
         WorkspaceEntry(normalized, target.name ?: name, EntryType.DIRECTORY, 0L, target.lastModified().coerceAtLeast(0L), target.type)
     }
 
     suspend fun delete(workspace: Workspace, relativePath: String) = withContext(Dispatchers.IO) {
-        val normalized = requireFilePath(relativePath)
-        val document = resolveDocument(workspace, normalized)
+        val normalized = requireFilePath(relativePath); val document = resolveDocument(workspace, normalized)
         require(document.uri != workspace.uri()) { "Cannot delete workspace root" }
         require(document.delete()) { "Unable to delete: $normalized" }
     }
 
     suspend fun rename(workspace: Workspace, relativePath: String, newName: String): WorkspaceEntry = withContext(Dispatchers.IO) {
-        val normalized = requireFilePath(relativePath)
-        val cleanName = validateName(newName)
-        val document = resolveDocument(workspace, normalized)
+        val normalized = requireFilePath(relativePath); val cleanName = validateName(newName); val document = resolveDocument(workspace, normalized)
         require(document.uri != workspace.uri()) { "Cannot rename workspace root" }
-        val parentPath = parent(normalized)
-        val parent = resolveDocument(workspace, parentPath)
+        val parentPath = parent(normalized); val parent = resolveDocument(workspace, parentPath)
         require(parent.isDirectory) { "Parent is not a directory: $parentPath" }
-        val collision = parent.findFile(cleanName)
-        require(collision == null || collision.uri == document.uri) { "Path already exists: ${join(parentPath, cleanName)}" }
+        val collision = parent.findFile(cleanName); require(collision == null || collision.uri == document.uri) { "Path already exists: ${join(parentPath, cleanName)}" }
         require(document.renameTo(cleanName)) { "Unable to rename: $normalized" }
         WorkspaceEntry(join(parentPath, cleanName), cleanName, if (document.isDirectory) EntryType.DIRECTORY else EntryType.FILE, if (document.isFile) document.length().coerceAtLeast(0L) else 0L, document.lastModified().coerceAtLeast(0L), document.type)
     }
 
     suspend fun copy(workspace: Workspace, sourcePath: String, destinationPath: String) = withContext(Dispatchers.IO) {
-        val source = resolveDocument(workspace, requireFilePath(sourcePath))
-        val destination = requireFilePath(destinationPath)
-        require(source.uri != workspace.uri()) { "Cannot copy workspace root" }
-        require(resolveDocumentOrNull(workspace, destination) == null) { "Destination already exists: $destination" }
-        require(!isDescendant(destination, sourcePath)) { "Cannot copy a directory into itself" }
+        val source = resolveDocument(workspace, requireFilePath(sourcePath)); val destination = requireFilePath(destinationPath)
+        require(source.uri != workspace.uri()) { "Cannot copy workspace root" }; require(resolveDocumentOrNull(workspace, destination) == null) { "Destination already exists: $destination" }; require(!isDescendant(destination, sourcePath)) { "Cannot copy a directory into itself" }
         if (source.isDirectory) copyDirectory(workspace, source, destination) else copyFile(source, ensureDirectory(workspace, parent(destination)), leaf(destination))
     }
 
     suspend fun move(workspace: Workspace, sourcePath: String, destinationPath: String) = withContext(Dispatchers.IO) {
-        val sourceNormalized = requireFilePath(sourcePath)
-        val destination = requireFilePath(destinationPath)
-        val source = resolveDocument(workspace, sourceNormalized)
-        require(source.uri != workspace.uri()) { "Cannot move workspace root" }
-        require(resolveDocumentOrNull(workspace, destination) == null) { "Destination already exists: $destination" }
-        require(!isDescendant(destination, sourceNormalized)) { "Cannot move a directory into itself" }
-        val destinationParent = ensureDirectory(workspace, parent(destination))
-        val destinationName = leaf(destination)
-        val sourceParent = resolveDocument(workspace, parent(sourceNormalized))
+        val sourceNormalized = requireFilePath(sourcePath); val destination = requireFilePath(destinationPath); val source = resolveDocument(workspace, sourceNormalized)
+        require(source.uri != workspace.uri()) { "Cannot move workspace root" }; require(resolveDocumentOrNull(workspace, destination) == null) { "Destination already exists: $destination" }; require(!isDescendant(destination, sourceNormalized)) { "Cannot move a directory into itself" }
+        val destinationParent = ensureDirectory(workspace, parent(destination)); val destinationName = leaf(destination); val sourceParent = resolveDocument(workspace, parent(sourceNormalized))
         if (sourceParent.uri == destinationParent.uri && source.renameTo(destinationName)) return@withContext
         if (source.isDirectory) copyDirectory(workspace, source, destination) else copyFile(source, destinationParent, destinationName)
         require(source.delete()) { "Copied item but failed to remove source: $sourceNormalized" }
@@ -144,52 +123,13 @@ class WorkspaceFileSystem(private val context: Context) {
     suspend fun exists(workspace: Workspace, relativePath: String): Boolean = withContext(Dispatchers.IO) { resolveDocumentOrNull(workspace, normalize(relativePath)) != null }
     suspend fun isDirectory(workspace: Workspace, relativePath: String): Boolean = withContext(Dispatchers.IO) { resolveDocumentOrNull(workspace, normalize(relativePath))?.isDirectory == true }
 
-    private fun copyFile(source: DocumentFile, parent: DocumentFile, name: String) {
-        val target = parent.createFile(source.type ?: "application/octet-stream", name) ?: throw IOException("Unable to create copy: $name")
-        try {
-            resolver.openInputStream(source.uri)?.use { input ->
-                resolver.openOutputStream(target.uri)?.use { output -> input.copyTo(output) } ?: throw IOException("Unable to open destination: $name")
-            } ?: throw IOException("Unable to read source: ${source.name ?: source.uri}")
-        } catch (error: Throwable) { target.delete(); throw error }
-    }
-
-    private fun copyDirectory(workspace: Workspace, source: DocumentFile, destination: String) {
-        val target = ensureDirectory(workspace, destination)
-        source.listFiles().forEach { child ->
-            val childName = child.name ?: return@forEach
-            if (child.isDirectory) copyDirectory(workspace, child, join(destination, childName)) else copyFile(child, target, childName)
-        }
-    }
-
+    private fun readBytesInternal(document: DocumentFile, path: String): ByteArray = resolver.openInputStream(document.uri)?.use { input -> input.readBytes() } ?: throw IOException("Unable to open file: $path")
+    private fun copyFile(source: DocumentFile, parent: DocumentFile, name: String) { val target = parent.createFile(source.type ?: "application/octet-stream", name) ?: throw IOException("Unable to create copy: $name"); try { resolver.openInputStream(source.uri)?.use { input -> resolver.openOutputStream(target.uri)?.use { output -> input.copyTo(output) } ?: throw IOException("Unable to open destination: $name") } ?: throw IOException("Unable to read source: ${source.name ?: source.uri}") } catch (error: Throwable) { target.delete(); throw error } }
+    private fun copyDirectory(workspace: Workspace, source: DocumentFile, destination: String) { val target = ensureDirectory(workspace, destination); source.listFiles().forEach { child -> val childName = child.name ?: return@forEach; if (child.isDirectory) copyDirectory(workspace, child, join(destination, childName)) else copyFile(child, target, childName) } }
     private fun resolveDocument(workspace: Workspace, relativePath: String): DocumentFile = resolveDocumentOrNull(workspace, normalize(relativePath)) ?: throw IOException("Path not found: ${normalize(relativePath).ifEmpty { "/" }}")
-
-    private fun resolveDocumentOrNull(workspace: Workspace, relativePath: String): DocumentFile? {
-        val normalized = normalize(relativePath)
-        var current = DocumentFile.fromTreeUri(context, workspace.uri()) ?: throw IOException("Workspace is unavailable")
-        if (normalized.isEmpty()) return current
-        for (part in normalized.split('/')) {
-            current = current.findFile(part) ?: return null
-            if (!current.isDirectory && part != normalized.substringAfterLast('/')) return null
-        }
-        return current
-    }
-
-    private fun ensureDirectory(workspace: Workspace, relativePath: String): DocumentFile {
-        var current = DocumentFile.fromTreeUri(context, workspace.uri()) ?: throw IOException("Workspace is unavailable")
-        val normalized = normalize(relativePath)
-        if (normalized.isEmpty()) return current
-        for (part in normalized.split('/')) current = current.findFile(part)?.takeIf { it.isDirectory } ?: current.createDirectory(part) ?: throw IOException("Unable to create directory: $part")
-        return current
-    }
-
-    private fun normalize(path: String): String {
-        val raw = path.trim().replace('\\', '/')
-        require(!raw.startsWith('/')) { "Absolute paths are not allowed" }
-        val parts = raw.split('/').filter { it.isNotEmpty() }
-        require(parts.none { it == "." || it == ".." || it.contains('\u0000') }) { "Invalid path: $path" }
-        return parts.joinToString("/")
-    }
-
+    private fun resolveDocumentOrNull(workspace: Workspace, relativePath: String): DocumentFile? { val normalized = normalize(relativePath); var current = DocumentFile.fromTreeUri(context, workspace.uri()) ?: throw IOException("Workspace is unavailable"); if (normalized.isEmpty()) return current; for (part in normalized.split('/')) { current = current.findFile(part) ?: return null; if (!current.isDirectory && part != normalized.substringAfterLast('/')) return null }; return current }
+    private fun ensureDirectory(workspace: Workspace, relativePath: String): DocumentFile { var current = DocumentFile.fromTreeUri(context, workspace.uri()) ?: throw IOException("Workspace is unavailable"); val normalized = normalize(relativePath); if (normalized.isEmpty()) return current; for (part in normalized.split('/')) current = current.findFile(part)?.takeIf { it.isDirectory } ?: current.createDirectory(part) ?: throw IOException("Unable to create directory: $part"); return current }
+    private fun normalize(path: String): String { val raw = path.trim().replace('\\', '/'); require(!raw.startsWith('/')) { "Absolute paths are not allowed" }; val parts = raw.split('/').filter { it.isNotEmpty() }; require(parts.none { it == "." || it == ".." || it.contains('\u0000') }) { "Invalid path: $path" }; return parts.joinToString("/") }
     private fun requireFilePath(path: String): String = normalize(path).also { require(it.isNotEmpty()) { "A file path is required" } }
     private fun requireDirectoryPath(path: String): String = normalize(path).also { require(it.isNotEmpty()) { "A directory path is required" } }
     private fun validateName(name: String): String { val clean = name.trim(); require(clean.isNotEmpty() && clean != "." && clean != ".." && !clean.contains('/') && !clean.contains('\\') && !clean.contains('\u0000')) { "Invalid file name" }; return clean }
