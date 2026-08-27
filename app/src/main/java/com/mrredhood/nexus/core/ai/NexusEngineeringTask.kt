@@ -32,6 +32,7 @@ data class EngineeringTask(
     fun withPlan(steps: List<String>): EngineeringTask = copy(
         stage = EngineeringTaskStage.APPROVAL,
         plan = steps.filter { it.isNotBlank() },
+        completedSteps = completedSteps + "Create engineering plan",
         error = null
     )
 
