@@ -31,7 +31,6 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -157,11 +156,7 @@ fun CopilotScreen(project: NexusProject, onBack: () -> Unit) {
                 Column(modifier = Modifier.padding(16.dp)) {
                     Text("Copilot agent", style = MaterialTheme.typography.titleLarge)
                     Text(repository.ifBlank { "No GitHub repository connected" })
-                    Text(
-                        "Uses the Copilot entitlement, credits, model policies, and organization controls of the signed-in GitHub account. Nexus does not create a separate Copilot subscription.",
-                        style = MaterialTheme.typography.bodySmall,
-                        modifier = Modifier.padding(top = 6.dp)
-                    )
+                    Text("Uses the Copilot entitlement, credits, model policies, and organization controls of the signed-in GitHub account. Nexus does not create a separate Copilot subscription.", style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 6.dp))
                 }
             }
 
@@ -172,29 +167,19 @@ fun CopilotScreen(project: NexusProject, onBack: () -> Unit) {
                 Column(modifier = Modifier.weight(1f)) {
                     OutlinedButton(onClick = { modelMenu = true }, modifier = Modifier.fillMaxWidth()) { Text(model) }
                     DropdownMenu(expanded = modelMenu, onDismissRequest = { modelMenu = false }) {
-                        GitHubCopilotAgentService.SUPPORTED_MODELS.forEach { option ->
-                            DropdownMenuItem(text = { Text(option) }, onClick = { model = option; modelMenu = false })
-                        }
+                        GitHubCopilotAgentService.SUPPORTED_MODELS.forEach { option -> DropdownMenuItem(text = { Text(option) }, onClick = { model = option; modelMenu = false }) }
                     }
                 }
             }
 
-            Text(
-                if (model == GitHubCopilotAgentService.AUTO_MODEL) "Model: GitHub Auto selection uses the account's Copilot plan and organization/enterprise policy."
-                else "Model availability is controlled by the account's Copilot plan and organization/enterprise policy; GitHub remains authoritative.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
+            Text(if (model == GitHubCopilotAgentService.AUTO_MODEL) "Model: GitHub Auto selection uses the account's Copilot plan and organization/enterprise policy." else "Model availability is controlled by the account's Copilot plan and organization/enterprise policy; GitHub remains authoritative.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
 
             Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
                 Checkbox(checked = createPullRequest, onCheckedChange = { createPullRequest = it })
                 Text("Create a pull request when the task finishes")
             }
 
-            Row(
-                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(6.dp)
-            ) {
+            Row(modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 listOf("Research", "Plan", "Review", "Fix tests").forEach { preset ->
                     FilledTonalButton(onClick = {
                         prompt = when (preset) {
@@ -207,15 +192,7 @@ fun CopilotScreen(project: NexusProject, onBack: () -> Unit) {
                 }
             }
 
-            OutlinedTextField(
-                value = prompt,
-                onValueChange = { prompt = it },
-                label = { Text("Ask Copilot to work on this repository") },
-                placeholder = { Text("Implement, debug, refactor, test, review, document...") },
-                minLines = 4,
-                keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
-                modifier = Modifier.fillMaxWidth()
-            )
+            OutlinedTextField(value = prompt, onValueChange = { prompt = it }, label = { Text("Ask Copilot to work on this repository") }, placeholder = { Text("Implement, debug, refactor, test, review, document...") }, minLines = 4, keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences), modifier = Modifier.fillMaxWidth())
 
             Button(onClick = { sendTask() }, enabled = !loading && prompt.isNotBlank() && repository.isNotBlank(), modifier = Modifier.fillMaxWidth()) {
                 Icon(Icons.Outlined.Send, null)
@@ -223,7 +200,7 @@ fun CopilotScreen(project: NexusProject, onBack: () -> Unit) {
                 Text("Send to Copilot")
             }
 
-            if (loading) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+            if (loading) AiActivityIndicator()
             error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
             info?.let { Text(it, color = MaterialTheme.colorScheme.primary) }
 
@@ -241,15 +218,9 @@ fun CopilotScreen(project: NexusProject, onBack: () -> Unit) {
                                 Text("${session.headRef ?: "new branch"} → ${session.baseRef ?: baseBranch} · ${session.model ?: "auto"}", style = MaterialTheme.typography.labelSmall)
                             }
                             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                task.htmlUrl?.let { url ->
-                                    TextButton(onClick = { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) }) { Icon(Icons.Outlined.OpenInNew, null); Text("Open") }
-                                }
-                                task.pullRequestNumber?.let { number ->
-                                    TextButton(onClick = { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/$repository/pull/$number"))) }) { Text("PR #$number") }
-                                }
-                                if (task.sessions.lastOrNull()?.headRef != null && task.state != "queued" && task.state != "in_progress") {
-                                    TextButton(onClick = { continueTask = task }) { Text("Continue") }
-                                }
+                                task.htmlUrl?.let { url -> TextButton(onClick = { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) }) { Icon(Icons.Outlined.OpenInNew, null); Text("Open") } }
+                                task.pullRequestNumber?.let { number -> TextButton(onClick = { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/$repository/pull/$number"))) }) { Text("PR #$number") } }
+                                if (task.sessions.lastOrNull()?.headRef != null && task.state != "queued" && task.state != "in_progress") TextButton(onClick = { continueTask = task }) { Text("Continue") }
                             }
                         }
                     }
@@ -263,17 +234,15 @@ fun CopilotScreen(project: NexusProject, onBack: () -> Unit) {
         AlertDialog(
             onDismissRequest = { selectedTask = null },
             title = { Text(task.name) },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text("State: ${task.state}")
-                    Text("Task ID: ${task.id}", style = MaterialTheme.typography.bodySmall)
-                    task.sessions.forEachIndexed { index, session ->
-                        Text("Session ${index + 1}: ${session.state}", style = MaterialTheme.typography.titleSmall)
-                        Text(session.prompt)
-                        Text("${session.headRef ?: "new branch"} → ${session.baseRef ?: "base"} · ${session.model ?: "auto"}", style = MaterialTheme.typography.bodySmall)
-                    }
+            text = { Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text("State: ${task.state}")
+                Text("Task ID: ${task.id}", style = MaterialTheme.typography.bodySmall)
+                task.sessions.forEachIndexed { index, session ->
+                    Text("Session ${index + 1}: ${session.state}", style = MaterialTheme.typography.titleSmall)
+                    Text(session.prompt)
+                    Text("${session.headRef ?: "new branch"} → ${session.baseRef ?: "base"} · ${session.model ?: "auto"}", style = MaterialTheme.typography.bodySmall)
                 }
-            },
+            } },
             confirmButton = { TextButton(onClick = { selectedTask = null }) { Text("Close") } }
         )
     }
@@ -283,12 +252,8 @@ fun CopilotScreen(project: NexusProject, onBack: () -> Unit) {
         AlertDialog(
             onDismissRequest = { continueTask = null },
             title = { Text("Continue Copilot work") },
-            text = {
-                OutlinedTextField(value = prompt, onValueChange = { prompt = it }, label = { Text("Follow-up instruction") }, minLines = 3, modifier = Modifier.fillMaxWidth())
-            },
-            confirmButton = {
-                TextButton(enabled = prompt.isNotBlank() && !loading && session?.headRef != null, onClick = { sendTask(headRef = session?.headRef, message = prompt) }) { Text("Send") }
-            },
+            text = { OutlinedTextField(value = prompt, onValueChange = { prompt = it }, label = { Text("Follow-up instruction") }, minLines = 3, modifier = Modifier.fillMaxWidth()) },
+            confirmButton = { TextButton(enabled = prompt.isNotBlank() && !loading && session?.headRef != null, onClick = { sendTask(headRef = session?.headRef, message = prompt) }) { Text("Send") } },
             dismissButton = { TextButton(onClick = { continueTask = null }) { Text("Cancel") } }
         )
     }
