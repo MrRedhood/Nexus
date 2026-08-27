@@ -43,7 +43,7 @@ class ModelCatalog(context: Context) {
                 if (!text) continue
                 val raw = item.optString("name").removePrefix("models/")
                 if (raw.isBlank()) continue
-                add(AiModel(raw, item.optString("displayName", raw), "Gemini", ModelPricing.UNKNOWN, setOf("text")))
+                add(AiModel(raw, item.optString("displayName", raw), "Gemini", ModelPricing.UNKNOWN, setOf("text"), item.optIntOrNull("inputTokenLimit")))
             }
         }
     }
@@ -56,7 +56,7 @@ class ModelCatalog(context: Context) {
             for (i in 0 until data.length()) {
                 val item = data.optJSONObject(i) ?: continue
                 val id = item.optString("id")
-                if (id.isNotBlank()) add(AiModel(id, item.optString("display_name", id), "Anthropic", ModelPricing.UNKNOWN, setOf("text")))
+                if (id.isNotBlank()) add(AiModel(id, item.optString("display_name", id), "Anthropic", ModelPricing.UNKNOWN, setOf("text"), item.optIntOrNull("context_window")))
             }
         }
     }
@@ -80,7 +80,8 @@ class ModelCatalog(context: Context) {
                 collectModalities(item.optJSONObject("architecture")?.optJSONArray("output_modalities"), modalities)
                 if (modalities.isEmpty()) modalities.add("text")
                 val cost = if (!prompt.isNaN() && !completion.isNaN()) ModelPricing(prompt, completion) else ModelPricing.UNKNOWN
-                add(AiModel(id, item.optString("name", id), provider, cost, modalities))
+                val contextWindow = item.optIntOrNull("context_length", "context_window", "max_input_tokens")
+                add(AiModel(id, item.optString("name", id), provider, cost, modalities, contextWindow))
             }
         }
     }
@@ -131,6 +132,8 @@ class ModelCatalog(context: Context) {
     }
 
     private fun encode(value: String) = URLEncoder.encode(value, Charsets.UTF_8.name()).replace("+", "%20")
+
+    private fun JSONObject.optIntOrNull(vararg names: String): Int? = names.firstOrNull { has(it) && !isNull(it) }?.let { optInt(it).takeIf { value -> value > 0 } }
 }
 
 data class ModelPricing(val prompt: Double, val completion: Double) {
@@ -139,7 +142,14 @@ data class ModelPricing(val prompt: Double, val completion: Double) {
     companion object { val UNKNOWN = ModelPricing(-1.0, -1.0) }
 }
 
-data class AiModel(val id: String, val name: String, val provider: String, val pricing: ModelPricing, val modalities: Set<String>) {
+data class AiModel(
+    val id: String,
+    val name: String,
+    val provider: String,
+    val pricing: ModelPricing,
+    val modalities: Set<String>,
+    val contextWindow: Int? = null
+) {
     val premium: Boolean get() = pricing.known && !pricing.free
     val image: Boolean get() = "image" in modalities
     val video: Boolean get() = "video" in modalities
