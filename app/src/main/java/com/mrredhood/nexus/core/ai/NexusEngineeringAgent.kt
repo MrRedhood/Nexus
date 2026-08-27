@@ -9,7 +9,8 @@ import kotlinx.coroutines.CancellationException
  *
  * maxIterations limits recovery cycles, not individual workflow stages. A normal
  * inspect -> plan -> approve -> edit -> test -> build -> verify run can always
- * traverse the complete loop.
+ * traverse the complete loop. When the recovery budget is exhausted, the agent
+ * preserves the recovery plan at an approval gate instead of silently retrying.
  */
 class NexusEngineeringAgent(private val maxIterations: Int = 5) {
     suspend fun run(
@@ -57,16 +58,16 @@ class NexusEngineeringAgent(private val maxIterations: Int = 5) {
                             recoveryAttempts++
                             val diagnosis = environment.verify("Tests failed: ${result.message}")
                             val nextPlan = environment.plan(task.request, diagnosis)
-                            if (recoveryAttempts > maxIterations) {
-                                task.fail("Engineering task exceeded its test-recovery limit: ${result.message}")
-                            } else {
-                                task.copy(
-                                    stage = EngineeringTaskStage.APPROVAL,
-                                    plan = nextPlan,
-                                    lastResult = result.message,
-                                    error = null
-                                )
+                            val nextTask = task.copy(
+                                stage = EngineeringTaskStage.APPROVAL,
+                                plan = nextPlan,
+                                lastResult = result.message,
+                                error = null
+                            )
+                            if (recoveryAttempts >= maxIterations) {
+                                return publish(nextTask)
                             }
+                            nextTask
                         } else {
                             task.completeStep("Run tests", result.message)
                         }
@@ -77,16 +78,16 @@ class NexusEngineeringAgent(private val maxIterations: Int = 5) {
                             recoveryAttempts++
                             val diagnosis = environment.verify("Build failed: ${result.message}")
                             val nextPlan = environment.plan(task.request, diagnosis)
-                            if (recoveryAttempts > maxIterations) {
-                                task.fail("Engineering task exceeded its build-recovery limit: ${result.message}")
-                            } else {
-                                task.copy(
-                                    stage = EngineeringTaskStage.APPROVAL,
-                                    plan = nextPlan,
-                                    lastResult = result.message,
-                                    error = null
-                                )
+                            val nextTask = task.copy(
+                                stage = EngineeringTaskStage.APPROVAL,
+                                plan = nextPlan,
+                                lastResult = result.message,
+                                error = null
+                            )
+                            if (recoveryAttempts >= maxIterations) {
+                                return publish(nextTask)
                             }
+                            nextTask
                         } else {
                             task.completeStep("Build project", result.message)
                         }
