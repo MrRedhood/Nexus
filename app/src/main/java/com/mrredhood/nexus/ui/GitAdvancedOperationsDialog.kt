@@ -53,6 +53,7 @@ fun GitAdvancedOperationsDialog(
     var commitSha by remember { mutableStateOf("") }
     var resetSha by remember { mutableStateOf("") }
     var stashName by remember { mutableStateOf("nexus/stash/${System.currentTimeMillis()}") }
+    var conflictDialog by remember { mutableStateOf(false) }
     var loading by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     var result by remember { mutableStateOf<String?>(null) }
@@ -115,7 +116,10 @@ fun GitAdvancedOperationsDialog(
                     Text("Merge the selected head into the base branch using GitHub's merge API.", style = MaterialTheme.typography.bodySmall)
                     OutlinedTextField(baseBranch, { baseBranch = it }, label = { Text("Base branch") }, singleLine = true, modifier = Modifier.fillMaxWidth().padding(top = 8.dp))
                     OutlinedTextField(headBranch, { headBranch = it }, label = { Text("Head branch") }, singleLine = true, modifier = Modifier.fillMaxWidth().padding(top = 6.dp))
-                    Button(enabled = !loading && baseBranch.isNotBlank() && headBranch.isNotBlank() && baseBranch != headBranch, onClick = { run { token -> service.mergeBranches(repository, baseBranch.trim(), headBranch.trim(), token) } }, modifier = Modifier.padding(top = 8.dp)) { Text("Merge") }
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 8.dp)) {
+                        Button(enabled = !loading && baseBranch.isNotBlank() && headBranch.isNotBlank() && baseBranch != headBranch, onClick = { run { token -> service.mergeBranches(repository, baseBranch.trim(), headBranch.trim(), token) } }, modifier = Modifier.weight(1f)) { Text("Merge") }
+                        OutlinedButton(enabled = !loading && baseBranch.isNotBlank() && headBranch.isNotBlank() && baseBranch != headBranch, onClick = { conflictDialog = true }, modifier = Modifier.weight(1f)) { Text("Resolve conflicts") }
+                    }
                 }
                 item {
                     Text("Cherry-pick commit", style = MaterialTheme.typography.titleMedium)
@@ -139,4 +143,14 @@ fun GitAdvancedOperationsDialog(
         },
         confirmButton = { TextButton(onClick = onClose) { Text("Close") } }
     )
+
+    if (conflictDialog) {
+        GitMergeConflictDialog(
+            project = project,
+            baseBranch = baseBranch.trim(),
+            headBranch = headBranch.trim(),
+            onClose = { conflictDialog = false },
+            onChanged = { conflictDialog = false; onChanged() }
+        )
+    }
 }
