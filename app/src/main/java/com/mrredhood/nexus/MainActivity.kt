@@ -5,7 +5,7 @@ package com.mrredhood.nexus
 import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
-import androidx.activity.compose.BackHandler
+import androidx.activity.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
@@ -40,6 +40,7 @@ import com.mrredhood.nexus.core.settings.NexusSettings
 import com.mrredhood.nexus.core.workspace.EntryType
 import com.mrredhood.nexus.core.workspace.Workspace
 import com.mrredhood.nexus.core.workspace.WorkspaceEntry
+import kotlinx.coroutines.launch
 import com.mrredhood.nexus.ui.ChatScreen
 import com.mrredhood.nexus.ui.GitScreen
 import com.mrredhood.nexus.ui.NexusViewModel
@@ -173,18 +174,17 @@ private fun WorkspaceScreen(project: NexusProject, workspace: Workspace, onBack:
     val drawerScope = rememberCoroutineScope()
 
     ModalNavigationDrawer(drawerState = drawerState, drawerContent = { ProjectFileTreeDrawer(workspace, currentPath, { path -> vm.read(workspace, path) }, { path -> vm.navigateTo(workspace, path); drawerScope.launch { drawerState.close() } }, { drawerScope.launch { drawerState.close() } }) }) {
-    Scaffold(topBar = { TopAppBar(title = { Text(project.name) }, navigationIcon = { IconButton(onClick = { drawerScope.launch { drawerState.open() } }) { Icon(Icons.Outlined.Menu, "Project files") } }, actions = { IconButton(onClick = { showGit = true }) { Icon(Icons.Outlined.Source, "Source control") }; IconButton(onClick = { showAiChat = true }) { Icon(Icons.Outlined.AutoAwesome, "AI chat") }; IconButton(onClick = { vm.refresh(workspace) }) { Icon(Icons.Outlined.Refresh, "Refresh") }; IconButton(onClick = { createDialog = "file" }) { Icon(Icons.Outlined.Add, "Create file") }; IconButton(onClick = { createDialog = "folder" }) { Icon(Icons.Outlined.CreateNewFolder, "Create folder") } }) }) { padding ->
-        Column(Modifier.fillMaxSize().padding(padding).padding(horizontal = 16.dp)) {
-            Card(Modifier.fillMaxWidth().padding(top = 8.dp), shape = MaterialTheme.shapes.large) { Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 12.dp, vertical = 10.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) { breadcrumbPaths.forEachIndexed { index, path -> if (index > 0) Icon(Icons.Outlined.ChevronRight, null, modifier = Modifier.size(18.dp)); TextButton(onClick = { vm.navigateTo(workspace, path) }) { Text(if (index == 0) workspace.displayName else segments[index - 1], maxLines = 1) } } } }
-            Card(Modifier.fillMaxWidth().padding(top = 10.dp), shape = MaterialTheme.shapes.large, colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHighest), onClick = { showAiChat = true }) { Row(Modifier.fillMaxWidth().padding(16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) { Icon(Icons.Outlined.AutoAwesome, "AI chat"); Column(Modifier.weight(1f)) { Text("Ask Nexus AI", style = MaterialTheme.typography.titleMedium); Text("Analyze, search, explain, fix, refactor or edit this workspace", style = MaterialTheme.typography.bodySmall) }; Icon(Icons.Outlined.ChevronRight, null) } }
-            if (currentPath.isNotBlank()) Row(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) { FilledTonalButton(onClick = { vm.up(workspace) }) { Icon(Icons.Outlined.ArrowUpward, null); Spacer(Modifier.width(6.dp)); Text("Parent") } }
-            if (loading) LinearProgressIndicator(Modifier.fillMaxWidth().padding(top = 8.dp))
-            LazyColumn(Modifier.fillMaxSize().padding(top = 10.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                items(entries, key = { it.relativePath }) { entry -> EntryCard(entry, { if (entry.type == EntryType.DIRECTORY) vm.enter(workspace, entry.relativePath) else vm.read(workspace, entry.relativePath) }, { action -> when (action) { FileAction.RENAME -> nameDialog = NameAction("Rename", entry); FileAction.COPY -> destinationDialog = DestinationAction("Copy", entry, false); FileAction.MOVE -> destinationDialog = DestinationAction("Move", entry, true); FileAction.DELETE -> deleteTarget = entry } }) }
-                item { Spacer(Modifier.height(20.dp)) }
+        Scaffold(topBar = { TopAppBar(title = { Text(project.name) }, navigationIcon = { IconButton(onClick = { drawerScope.launch { drawerState.open() } }) { Icon(Icons.Outlined.Menu, "Project files") } }, actions = { IconButton(onClick = { showGit = true }) { Icon(Icons.Outlined.Source, "Source control") }; IconButton(onClick = { vm.refresh(workspace) }) { Icon(Icons.Outlined.Refresh, "Refresh") }; IconButton(onClick = { createDialog = "file" }) { Icon(Icons.Outlined.Add, "Create file") }; IconButton(onClick = { createDialog = "folder" }) { Icon(Icons.Outlined.CreateNewFolder, "Create folder") } }) }, floatingActionButton = { FloatingActionButton(onClick = { showAiChat = true }) { Icon(Icons.Outlined.AutoAwesome, "AI chat") } }) { padding ->
+            Column(Modifier.fillMaxSize().padding(padding).padding(horizontal = 16.dp)) {
+                Card(Modifier.fillMaxWidth().padding(top = 8.dp), shape = MaterialTheme.shapes.large) { Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 12.dp, vertical = 10.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) { breadcrumbPaths.forEachIndexed { index, path -> if (index > 0) Icon(Icons.Outlined.ChevronRight, null, modifier = Modifier.size(18.dp)); TextButton(onClick = { vm.navigateTo(workspace, path) }) { Text(if (index == 0) workspace.displayName else segments[index - 1], maxLines = 1) } } } }
+                if (currentPath.isNotBlank()) Row(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) { FilledTonalButton(onClick = { vm.up(workspace) }) { Icon(Icons.Outlined.ArrowUpward, null); Spacer(Modifier.width(6.dp)); Text("Parent") } }
+                if (loading) LinearProgressIndicator(Modifier.fillMaxWidth().padding(top = 8.dp))
+                LazyColumn(Modifier.fillMaxSize().padding(top = 10.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    items(entries, key = { it.relativePath }) { entry -> EntryCard(entry, { if (entry.type == EntryType.DIRECTORY) vm.enter(workspace, entry.relativePath) else vm.read(workspace, entry.relativePath) }, { action -> when (action) { FileAction.RENAME -> nameDialog = NameAction("Rename", entry); FileAction.COPY -> destinationDialog = DestinationAction("Copy", entry, false); FileAction.MOVE -> destinationDialog = DestinationAction("Move", entry, true); FileAction.DELETE -> deleteTarget = entry } }) }
+                    item { Spacer(Modifier.height(20.dp)) }
+                }
             }
         }
-    }
     }
     createDialog?.let { type -> NameDialog(if (type == "folder") "New folder" else "New file", "Create", { createDialog = null }) { name -> if (type == "folder") vm.createDirectory(workspace, name) else vm.createFile(workspace, name); createDialog = null } }
     nameDialog?.let { action -> NameDialog(action.title, "Rename", { nameDialog = null }, action.entry.name) { name -> vm.rename(workspace, action.entry.relativePath, name); nameDialog = null } }
