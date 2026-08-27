@@ -79,6 +79,7 @@
 - ✅ AI patch execution with validation and snapshot-backed rollback
 - ✅ Focused AI provider settings: Gemini, OpenRouter, DeepInfra, LiteLLM
 - ✅ Lazy pagination for GitHub issues and comments
+- ✅ AI action payload parsing hardening and JVM test-runtime compatibility
 - 🔄 GitHub repository discovery and Actions build/artifact foundation
 
 ## Next priority
@@ -87,4 +88,4 @@
 2. ⬜ Complete provider error/fallback handling and token/context accounting.
 3. ⬜ Finish patch planner and conflict detection for AI workspace edits.
 
-_Last updated: 2026-08-27 — Fixed the CI source-rewrite failure, restored the WorkspaceScreen/AI FAB implementation, corrected the Compose BackHandler import, removed unsafe CI source rewriting, and verified by Nexus Android CI run 359._
+_Last updated: 2026-08-27 — Recorded successful Nexus Android CI run 369 (run 33053178787) after resolving the AI action protocol test/runtime regression. Android CI completed successfully on `main`._
