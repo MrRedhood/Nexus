@@ -7,10 +7,8 @@ import kotlinx.coroutines.CancellationException
  * Concrete integrations (workspace inspection, tests and GitHub Actions builds)
  * are supplied by the caller so this core remains independent of UI.
  *
- * maxIterations limits recovery cycles, not individual workflow stages. A normal
- * inspect -> plan -> approve -> edit -> test -> build -> verify run can always
- * traverse the complete loop. When the recovery budget is exhausted, the agent
- * preserves the recovery plan at an approval gate instead of silently retrying.
+ * The stateful NexusEngineeringSession owns stage transitions and recovery gates;
+ * this runner supplies the actual environment operations.
  */
 class NexusEngineeringAgent(private val maxIterations: Int = 5) {
     suspend fun run(
@@ -19,93 +17,74 @@ class NexusEngineeringAgent(private val maxIterations: Int = 5) {
         environment: EngineeringTaskEnvironment,
         onTask: (EngineeringTask) -> Unit = {}
     ): EngineeringTask {
-        var task = initial
-        var recoveryAttempts = 0
-        fun publish(next: EngineeringTask): EngineeringTask {
-            task = next
-            onTask(task)
-            return task
+        val session = NexusEngineeringSession(initial.request, maxIterations)
+        fun publish(): EngineeringTask {
+            onTask(session.task)
+            return session.task
         }
 
         return try {
-            while (task.stage !in setOf(EngineeringTaskStage.COMPLETED, EngineeringTaskStage.FAILED, EngineeringTaskStage.CANCELLED)) {
-                task = when (task.stage) {
+            while (session.task.stage !in TERMINAL_STAGES) {
+                when (session.task.stage) {
                     EngineeringTaskStage.INSPECT -> {
-                        val result = environment.inspect(task.request)
-                        task.completeStep("Inspect workspace", result)
+                        session.inspected(environment.inspect(session.task.request))
                     }
                     EngineeringTaskStage.PLAN -> {
-                        val plan = environment.plan(task.request, task.completedSteps.lastOrNull())
-                        task.withPlan(plan)
+                        val plan = environment.plan(session.task.request, session.task.completedSteps.lastOrNull())
+                        session.planned(plan)
                     }
                     EngineeringTaskStage.APPROVAL -> {
-                        if (!EngineeringTaskGate.canAdvance(task, permissionMode)) {
-                            return publish(task.fail("Engineering task requires approval, but AI permission is set to Never."))
+                        if (!EngineeringTaskGate.canAdvance(session.task, permissionMode)) {
+                            session.approve(permissionMode)
+                        } else if (permissionMode.equals("some", true)) {
+                            return publish()
+                        } else {
+                            session.approve(permissionMode)
                         }
-                        if (permissionMode.equals("some", true)) return publish(task)
-                        task.approve()
                     }
                     EngineeringTaskStage.EDIT -> {
-                        if (!EngineeringTaskGate.canAdvance(task, permissionMode)) {
-                            return publish(task.fail("Editing is blocked by the current AI permission mode."))
-                        }
-                        val result = environment.edit(task.plan)
-                        task.completeStep("Apply planned changes", result)
+                        session.edited(environment.edit(session.task.plan))
                     }
                     EngineeringTaskStage.TEST -> {
                         val result = environment.test()
-                        if (!result.success) {
-                            recoveryAttempts++
+                        session.tested(result)
+                        if (!result.success && session.task.stage == EngineeringTaskStage.APPROVAL) {
                             val diagnosis = environment.verify("Tests failed: ${result.message}")
-                            val nextPlan = environment.plan(task.request, diagnosis)
-                            val nextTask = task.copy(
-                                stage = EngineeringTaskStage.APPROVAL,
-                                plan = nextPlan,
-                                lastResult = result.message,
-                                error = null
-                            )
-                            if (recoveryAttempts >= maxIterations) {
-                                return publish(nextTask)
-                            }
-                            nextTask
-                        } else {
-                            task.completeStep("Run tests", result.message)
+                            session.recoveryPlan(environment.plan(session.task.request, diagnosis))
                         }
                     }
                     EngineeringTaskStage.BUILD -> {
                         val result = environment.build()
-                        if (!result.success) {
-                            recoveryAttempts++
+                        session.built(result)
+                        if (!result.success && session.task.stage == EngineeringTaskStage.APPROVAL) {
                             val diagnosis = environment.verify("Build failed: ${result.message}")
-                            val nextPlan = environment.plan(task.request, diagnosis)
-                            val nextTask = task.copy(
-                                stage = EngineeringTaskStage.APPROVAL,
-                                plan = nextPlan,
-                                lastResult = result.message,
-                                error = null
-                            )
-                            if (recoveryAttempts >= maxIterations) {
-                                return publish(nextTask)
-                            }
-                            nextTask
-                        } else {
-                            task.completeStep("Build project", result.message)
+                            session.recoveryPlan(environment.plan(session.task.request, diagnosis))
                         }
                     }
                     EngineeringTaskStage.VERIFY -> {
-                        val result = environment.verify(task.lastResult.orEmpty())
-                        task.completeStep("Verify results", if (result.isBlank()) "Verification completed." else result)
+                        session.verified(environment.verify(session.task.lastResult.orEmpty()))
                     }
-                    else -> task
+                    else -> Unit
                 }
-                publish(task)
+                publish()
             }
-            task
+            session.task
         } catch (cancelled: CancellationException) {
-            publish(task.cancel())
+            session.cancel()
+            publish()
         } catch (error: Throwable) {
-            publish(task.fail(error.message ?: "Engineering task failed."))
+            val failed = session.task.fail(error.message ?: "Engineering task failed.")
+            onTask(failed)
+            failed
         }
+    }
+
+    companion object {
+        private val TERMINAL_STAGES = setOf(
+            EngineeringTaskStage.COMPLETED,
+            EngineeringTaskStage.FAILED,
+            EngineeringTaskStage.CANCELLED
+        )
     }
 }
 
