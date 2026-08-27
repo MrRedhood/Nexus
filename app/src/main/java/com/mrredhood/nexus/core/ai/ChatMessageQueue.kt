@@ -2,11 +2,7 @@ package com.mrredhood.nexus.core.ai
 
 import java.util.UUID
 
-/**
- * FIFO queue for user messages submitted while Nexus is generating a response.
- * The queue is intentionally small and deterministic so rapid sends cannot
- * start concurrent model generations or lose user input.
- */
+/** FIFO queue for user messages submitted while Nexus is generating. */
 data class QueuedChatMessage(
     val id: String = UUID.randomUUID().toString(),
     val text: String,
@@ -26,6 +22,11 @@ class ChatMessageQueue(private val maxSize: Int = 20) {
     }
 
     fun poll(): QueuedChatMessage? = if (items.isEmpty()) null else items.removeFirst()
+
+    fun remove(id: String): Boolean {
+        val item = items.firstOrNull { it.id == id } ?: return false
+        return items.remove(item)
+    }
 
     fun clear() = items.clear()
 
