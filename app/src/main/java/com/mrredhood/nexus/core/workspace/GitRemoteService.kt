@@ -33,7 +33,7 @@ class GitRemoteService(context: Context) {
 
     suspend fun pull(remoteUrl: String, workspace: Workspace, projectId: String, branch: String): GitRemoteResult = withContext(Dispatchers.IO) {
         val url = normalizeUrl(remoteUrl); ensureRepository(url, projectId, branch); val repoDir = repoDir(projectId)
-        Git.open(repoDir).use { git -> configure(git); checkoutBranch(git, branch); val result = git.pull().setRemote("origin").setRemoteBranchName(branch).call(); if (!result.isSuccessful) throw IllegalStateException("Git pull did not complete cleanly.") }
+        Git.open(repoDir).use { git -> configure(git); checkoutBranch(git, branch); val command = git.pull().setRemote("origin").setRemoteBranchName(branch); configure(command, url); val result = command.call(); if (!result.isSuccessful) throw IllegalStateException("Git pull did not complete cleanly.") }
         syncRepoToWorkspace(repoDir, workspace); GitRemoteResult(url, branch, "Pulled $branch from remote.")
     }
 
@@ -50,14 +50,14 @@ class GitRemoteService(context: Context) {
         Git.open(repoDir).use { git ->
             configure(git); checkoutBranch(git, branch); git.add().addFilepattern(".").call(); git.add().setUpdate(true).addFilepattern(".").call(); val status = git.status().call()
             if (status.isClean) return@use GitRemoteResult(url, branch, "Nothing to commit.")
-            val commit = git.commit().setMessage(message.trim()).setAll(true).call(); val push = git.push().setRemote("origin").add(branch).call()
-            if (push.any { it.remoteUpdates.any { update -> update.status.isRejected } }) throw IllegalStateException("Git push was rejected by the remote. Pull first and resolve any divergence.")
+            val commit = git.commit().setMessage(message.trim()).setAll(true).call(); val push = git.push().setRemote("origin").add(branch); configure(push, url); val pushResult = push.call()
+            if (pushResult.any { it.remoteUpdates.any { update -> update.status.isRejected } }) throw IllegalStateException("Git push was rejected by the remote. Pull first and resolve any divergence.")
             GitRemoteResult(url, branch, "Committed ${commit.name.take(7)} and pushed to $branch.")
         }
     }
 
     suspend fun fetch(remoteUrl: String, projectId: String, branch: String): GitRemoteResult = withContext(Dispatchers.IO) {
-        val url = normalizeUrl(remoteUrl); ensureRepository(url, projectId, branch); Git.open(repoDir(projectId)).use { git -> configure(git); git.fetch().setRemote("origin").call() }; GitRemoteResult(url, branch, "Fetched remote refs.")
+        val url = normalizeUrl(remoteUrl); ensureRepository(url, projectId, branch); Git.open(repoDir(projectId)).use { git -> configure(git); val command = git.fetch().setRemote("origin"); configure(command, url); command.call() }; GitRemoteResult(url, branch, "Fetched remote refs.")
     }
 
     suspend fun resetLocal(projectId: String, branch: String) = withContext(Dispatchers.IO) {
