@@ -4,6 +4,7 @@ import com.mrredhood.nexus.core.settings.NexusSettingsRuntime
 import com.mrredhood.nexus.core.workspace.EntryType
 import com.mrredhood.nexus.core.workspace.Workspace
 import com.mrredhood.nexus.core.workspace.WorkspaceFileSystem
+import java.security.MessageDigest
 
 /** Executes AI workspace actions, enforcing the live permission mode and recording recovery snapshots. */
 class NexusActionExecutor(private val fileSystem: WorkspaceFileSystem) {
@@ -29,11 +30,17 @@ class NexusActionExecutor(private val fileSystem: WorkspaceFileSystem) {
             return ActionExecutionResult(false, message)
         }
 
+        val conflict = verifyExpectedHash(workspace, action)
+        if (conflict != null) {
+            NexusActionExecutionRegistry.record(NexusActionExecutionSummary(action.id, action.type, action.path, false, message = conflict))
+            return ActionExecutionResult(false, conflict)
+        }
+
         val snapshotId = runCatching { snapshotStore.capture(workspace, action) }.getOrNull()
         val result = runCatching {
             when (action.type) {
                 "list_files" -> { val directory = action.path?.trim().orEmpty(); val entries = fileSystem.list(workspace, directory); val output = entries.joinToString("\n") { "${if (it.type == EntryType.DIRECTORY) "DIR " else "FILE"} ${it.relativePath} (${it.sizeBytes} bytes)" }; ActionExecutionResult(true, "Listed ${entries.size} entries", output) }
-                "read_file" -> { val path = requirePath(action); val file = fileSystem.read(workspace, path); ActionExecutionResult(true, "Read $path", file.content) }
+                "read_file" -> { val path = requirePath(action); val file = fileSystem.read(workspace, path); ActionExecutionResult(true, "Read $path (sha256=${sha256(file.content)})", file.content) }
                 "open_file", "focus_file" -> { val path = requirePath(action); require(fileSystem.exists(workspace, path)) { "File not found: $path" }; ActionExecutionResult(true, "${action.type} requested for $path") }
                 "create_file" -> { val path = requirePath(action); val content = action.content.orEmpty(); val file = fileSystem.write(workspace, path, content, action.mimeType ?: "text/plain"); ActionExecutionResult(true, "Created $path (+${physicalLineCount(content)} lines)", file.content, snapshotId) }
                 "create_directory" -> { val path = requirePath(action); fileSystem.createDirectory(workspace, path); ActionExecutionResult(true, "Created directory $path", snapshotId = snapshotId) }
@@ -59,6 +66,21 @@ class NexusActionExecutor(private val fileSystem: WorkspaceFileSystem) {
     }
 
     suspend fun rollback(workspace: Workspace, actionId: String): Boolean = snapshotStore.rollback(workspace, actionId)
+
+    private suspend fun verifyExpectedHash(workspace: Workspace, action: NexusAction): String? {
+        val expected = action.expectedHash?.trim()?.lowercase()?.takeIf { it.isNotBlank() } ?: return null
+        if (action.type !in setOf("patch_file", "replace_file", "delete_file", "rename_file", "copy_file", "move_file")) return null
+        val path = action.path?.trim().orEmpty()
+        if (path.isBlank() || !fileSystem.exists(workspace, path) || fileSystem.isDirectory(workspace, path)) {
+            return "Edit conflict: expected file $path to exist with sha256=$expected, but it is missing or is a directory. Refresh the file and retry."
+        }
+        val actual = sha256(fileSystem.read(workspace, path).content)
+        return if (actual == expected) null else "Edit conflict: $path changed after AI inspection (expected sha256=$expected, actual sha256=$actual). Refresh and review the current file before applying the change."
+    }
+
+    private fun sha256(value: String): String = MessageDigest.getInstance("SHA-256")
+        .digest(value.toByteArray(Charsets.UTF_8))
+        .joinToString("") { "%02x".format(it) }
 
     private fun physicalLineCount(content: String): Int { val normalized = content.replace("\r\n", "\n").replace('\r', '\n'); if (normalized.isEmpty()) return 0; return normalized.count { it == '\n' } + if (normalized.last() == '\n') 0 else 1 }
     private fun parseCounts(message: String): Pair<Int, Int> { val additions = Regex("\\+(\\d+) lines?").find(message)?.groupValues?.get(1)?.toIntOrNull() ?: 0; val deletions = Regex("-(\\d+) lines?").find(message)?.groupValues?.get(1)?.toIntOrNull() ?: 0; return additions to deletions }
