@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
@@ -90,7 +91,9 @@ fun GitMergeConflictDialog(
                         item { Text("No merge conflicts detected. The branches can be merged normally.", color = MaterialTheme.colorScheme.primary) }
                     } else {
                         item { Text("${merge.conflicts.size} conflicting file${if (merge.conflicts.size == 1) "" else "s"}", style = MaterialTheme.typography.titleSmall) }
-                        merge.conflicts.forEach { conflict -> ConflictEditor(conflict, resolutions[conflict.path]) { value -> resolutions = resolutions + (conflict.path to value) } }
+                        items(merge.conflicts, key = { it.path }) { conflict ->
+                            ConflictEditor(conflict, resolutions[conflict.path]) { value -> resolutions = resolutions + (conflict.path to value) }
+                        }
                         item {
                             Button(
                                 enabled = !loading && unresolved == 0,
