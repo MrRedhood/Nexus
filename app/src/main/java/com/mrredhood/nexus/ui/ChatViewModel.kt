@@ -15,6 +15,7 @@ import com.mrredhood.nexus.core.ai.AutomaticContextMode
 import com.mrredhood.nexus.core.ai.ChatContext
 import com.mrredhood.nexus.core.ai.ChatContextBuilder
 import com.mrredhood.nexus.core.ai.ChatMessage
+import com.mrredhood.nexus.core.ai.ChatMessageQueue
 import com.mrredhood.nexus.core.ai.ChatRepository
 import com.mrredhood.nexus.core.ai.NexusActionExecutor
 import com.mrredhood.nexus.core.ai.NexusActionPolicy
@@ -24,6 +25,7 @@ import com.mrredhood.nexus.core.ai.NexusActionReview
 import com.mrredhood.nexus.core.ai.NexusActionStatus
 import com.mrredhood.nexus.core.ai.NexusAgentLoop
 import com.mrredhood.nexus.core.ai.NexusEditorActionBus
+import com.mrredhood.nexus.core.ai.QueuedChatMessage
 import com.mrredhood.nexus.core.ai.WorkspaceContextService
 import com.mrredhood.nexus.core.settings.NexusSettingsRuntime
 import com.mrredhood.nexus.core.workspace.Workspace
@@ -43,14 +45,18 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     private val workspaceContextService = WorkspaceContextService(WorkspaceFileSystem(application.applicationContext))
     private val actionExecutor = NexusActionExecutor(WorkspaceFileSystem(application.applicationContext))
     private val agentLoop = NexusAgentLoop(actionExecutor, maxRounds = 5)
+    private val messageQueue = ChatMessageQueue(maxSize = 20)
     private var workspaceId: String? = null
     private var workspace: Workspace? = null
     private var generationJob: Job? = null
+    private var stopRequested = false
 
     private val _messages = MutableStateFlow<List<ChatMessage>>(emptyList())
     val messages: StateFlow<List<ChatMessage>> = _messages.asStateFlow()
     private val _generating = MutableStateFlow(false)
     val generating: StateFlow<Boolean> = _generating.asStateFlow()
+    private val _queuedMessages = MutableStateFlow<List<QueuedChatMessage>>(emptyList())
+    val queuedMessages: StateFlow<List<QueuedChatMessage>> = _queuedMessages.asStateFlow()
     private val _error = MutableStateFlow<String?>(null)
     val error: StateFlow<String?> = _error.asStateFlow()
     private val _tokenUsage = MutableStateFlow(TokenUsage())
@@ -67,6 +73,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     fun open(workspace: Workspace) {
         if (this.workspaceId == workspace.id) { this.workspace = workspace; return }
         stop()
+        messageQueue.clear(); _queuedMessages.value = emptyList()
         workspaceId = workspace.id
         this.workspace = workspace
         _messages.value = repository.load(workspace.id)
@@ -144,23 +151,38 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         send(prompt, context)
     }
 
+    /** Sends immediately when idle; otherwise queues the message FIFO instead of dropping it. */
     fun send(text: String, context: ChatContext = ChatContext()) {
-        val id = workspaceId ?: return
         val rawPrompt = text.trim()
-        if (rawPrompt.isEmpty() || _generating.value) return
-        generationJob?.cancel()
+        if (rawPrompt.isEmpty() || workspaceId == null) return
+        if (_generating.value) {
+            val queued = QueuedChatMessage(text = rawPrompt, context = context)
+            if (messageQueue.offer(queued)) {
+                _queuedMessages.value = messageQueue.snapshot()
+            } else {
+                _error.value = "Message queue is full (20 messages). Wait for Nexus to finish or stop the current response."
+            }
+            return
+        }
+        stopRequested = false
+        processMessage(QueuedChatMessage(text = rawPrompt, context = context))
+    }
+
+    private fun processMessage(message: QueuedChatMessage) {
+        val id = workspaceId ?: return
         generationJob = viewModelScope.launch {
             _error.value = null
             _actionMessage.value = null
             _actionProposals.value = emptyList()
             _actionReviews.value = emptyMap()
+            val rawPrompt = message.text
             val prompt = normalizeCommand(rawPrompt)
-            inspectContext(prompt, context)
+            inspectContext(prompt, message.context)
             val settings = NexusSettingsRuntime.current()
             val previous = _messages.value
             val history = previous + ChatMessage("user", rawPrompt)
             val snapshot = _contextSnapshot.value
-            val system = contextBuilder.build(context, snapshot) + "\n\n" + WORKSPACE_TOOL_INSTRUCTIONS
+            val system = contextBuilder.build(message.context, snapshot) + "\n\n" + WORKSPACE_TOOL_INSTRUCTIONS
             val assistantIndex = history.size
             _messages.value = history + ChatMessage("assistant", "")
             _generating.value = true
@@ -209,8 +231,30 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 _messages.value = history
                 _error.value = error.message ?: "AI request failed."
                 repository.save(id, history)
-            } finally { _generating.value = false }
+            } finally {
+                _generating.value = false
+                generationJob = null
+                if (!stopRequested) processNextQueuedMessage()
+            }
         }
+    }
+
+    private fun processNextQueuedMessage() {
+        val next = messageQueue.poll() ?: run { _queuedMessages.value = emptyList(); return }
+        _queuedMessages.value = messageQueue.snapshot()
+        processMessage(next)
+    }
+
+    fun removeQueuedMessage(id: String) {
+        val remaining = messageQueue.snapshot().filterNot { it.id == id }
+        messageQueue.clear()
+        remaining.forEach(messageQueue::offer)
+        _queuedMessages.value = messageQueue.snapshot()
+    }
+
+    fun clearQueue() {
+        messageQueue.clear()
+        _queuedMessages.value = emptyList()
     }
 
     private fun updateAssistant(index: Int, content: String) {
@@ -235,8 +279,13 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         return if (body.isBlank()) instruction else "$instruction\nUser request: $body"
     }
 
-    fun stop() { generationJob?.cancel(); generationJob = null; _generating.value = false }
-    fun clear() { stop(); workspaceId?.let(repository::clear); _messages.value = emptyList(); _actionProposals.value = emptyList(); _actionReviews.value = emptyMap(); _actionMessage.value = null; _error.value = null; _tokenUsage.value = TokenUsage(); _contextSnapshot.value = null }
+    fun stop() {
+        stopRequested = true
+        generationJob?.cancel()
+        generationJob = null
+        _generating.value = false
+    }
+    fun clear() { stop(); clearQueue(); workspaceId?.let(repository::clear); _messages.value = emptyList(); _actionProposals.value = emptyList(); _actionReviews.value = emptyMap(); _actionMessage.value = null; _error.value = null; _tokenUsage.value = TokenUsage(); _contextSnapshot.value = null }
     fun clearError() { _error.value = null }
     fun rejectAction(id: String) { _actionProposals.value = _actionProposals.value.map { if (it.id == id) it.copy(status = NexusActionStatus.REJECTED) else it } }
     fun openAction(id: String) { val target = _actionProposals.value.firstOrNull { it.id == id } ?: return; val path = target.action.path ?: return; if (target.action.type == "open_file" || target.action.type == "focus_file") workspace?.let { NexusEditorActionBus.request(it.id, path, target.action.type == "focus_file") } }
