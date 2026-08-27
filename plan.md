@@ -87,4 +87,4 @@
 2. ⬜ Complete provider error/fallback handling and token/context accounting.
 3. ⬜ Finish patch planner and conflict detection for AI workspace edits.
 
-_Last updated: 2026-08-27 — ActionRow/action proposal renderer restored and verified by Nexus Android CI run 345._
+_Last updated: 2026-08-27 — Fixed the CI source-rewrite failure, restored the WorkspaceScreen/AI FAB implementation, corrected the Compose BackHandler import, removed unsafe CI source rewriting, and verified by Nexus Android CI run 359._
