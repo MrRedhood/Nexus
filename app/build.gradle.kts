@@ -38,6 +38,10 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.8.1")
 
+    // Native Git transport: HTTPS and SSH without requiring a system git binary.
+    implementation("org.eclipse.jgit:org.eclipse.jgit:6.10.1.202505221210-r")
+    implementation("org.eclipse.jgit:org.eclipse.jgit.ssh.apache:6.10.1.202505221210-r")
+
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.json:json:20240303")
 
