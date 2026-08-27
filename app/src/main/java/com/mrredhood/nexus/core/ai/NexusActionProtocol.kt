@@ -44,6 +44,7 @@ object NexusActionProtocol {
         action.mimeType?.let { put("mimeType", it) }
         action.content?.let { put("content", it) }
         action.patch?.let { put("patch", it) }
+        action.expectedHash?.let { put("expectedHash", it) }
     }.toString()
 
     fun encodeBatch(actions: List<NexusAction>): String = JSONArray().apply {
@@ -60,6 +61,7 @@ object NexusActionProtocol {
         val mimeType = json.optString("mimeType").trim().takeIf { it.isNotBlank() }
         val content = json.optString("content").takeIf { json.has("content") }
         val patch = json.optString("patch").takeIf { json.has("patch") }
+        val expectedHash = json.optString("expectedHash").trim().takeIf { it.isNotBlank() }
         require(type == "list_files" || path != null) { "$type requires a path" }
         require(type !in setOf("copy_file", "move_file") || destination != null) { "$type requires destination" }
         require(type != "rename_file" || newName != null) { "rename_file requires newName" }
@@ -67,7 +69,7 @@ object NexusActionProtocol {
         require(type != "patch_file" || patch != null) { "patch_file requires patch" }
         NexusActionProposal(
             id = json.optString("id").takeIf { it.isNotBlank() } ?: UUID.randomUUID().toString(),
-            action = NexusAction(type, path, destination, newName, mimeType, content, patch)
+            action = NexusAction(type, path, destination, newName, mimeType, content, patch, expectedHash)
         )
     }.getOrNull()
 }
@@ -80,6 +82,7 @@ data class NexusAction(
     val mimeType: String? = null,
     val content: String? = null,
     val patch: String? = null,
+    val expectedHash: String? = null,
     val id: String = UUID.randomUUID().toString()
 )
 
