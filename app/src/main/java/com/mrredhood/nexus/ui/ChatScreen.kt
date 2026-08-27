@@ -28,6 +28,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.ArrowUpward
+import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.DeleteSweep
 import androidx.compose.material.icons.outlined.Edit
@@ -65,6 +66,7 @@ import com.mrredhood.nexus.core.ai.NexusActionReview
 import com.mrredhood.nexus.core.ai.NexusActionStatus
 import com.mrredhood.nexus.core.ai.NexusActionProposal
 import com.mrredhood.nexus.core.ai.NexusDiffKind
+import com.mrredhood.nexus.core.ai.QueuedChatMessage
 import com.mrredhood.nexus.core.model.NexusProject
 import com.mrredhood.nexus.core.workspace.Workspace
 import kotlinx.coroutines.launch
@@ -77,6 +79,7 @@ fun ChatScreen(project: NexusProject, workspace: Workspace, context: ChatContext
     val settingsVm: AdvancedSettingsViewModel = viewModel()
     val messages by vm.messages.collectAsStateWithLifecycle()
     val generating by vm.generating.collectAsStateWithLifecycle()
+    val queuedMessages by vm.queuedMessages.collectAsStateWithLifecycle()
     val error by vm.error.collectAsStateWithLifecycle()
     val usage by vm.tokenUsage.collectAsStateWithLifecycle()
     val proposals by vm.actionProposals.collectAsStateWithLifecycle()
@@ -97,7 +100,7 @@ fun ChatScreen(project: NexusProject, workspace: Workspace, context: ChatContext
 
     LaunchedEffect(workspace.id, featureSettings.provider) { vm.open(workspace); settingsVm.loadModels(featureSettings.provider) }
     LaunchedEffect(liveContext) { chatContext = liveContext }
-    LaunchedEffect(messages.size, messages.lastOrNull()?.content) { if (messages.isNotEmpty()) listState.animateScrollToItem(messages.lastIndex) }
+    LaunchedEffect(messages.size, messages.lastOrNull()?.content, queuedMessages.size) { if (messages.isNotEmpty()) listState.animateScrollToItem(messages.lastIndex) }
 
     fun copyMessage(index: Int, content: String) {
         if (content.isBlank()) return
@@ -110,7 +113,7 @@ fun ChatScreen(project: NexusProject, workspace: Workspace, context: ChatContext
         Column(Modifier.fillMaxSize()) {
             Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.End) {
                 if (usage.total > 0) Text("${usage.total} tokens", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                IconButton(onClick = vm::clear, enabled = !generating) { Icon(Icons.Outlined.DeleteSweep, "Clear chat") }
+                IconButton(onClick = vm::clear, enabled = !generating && queuedMessages.isEmpty()) { Icon(Icons.Outlined.DeleteSweep, "Clear chat") }
                 onClose?.let { IconButton(onClick = it) { Text("×", style = MaterialTheme.typography.titleLarge) } }
             }
             LazyColumn(state = listState, modifier = Modifier.weight(1f).fillMaxWidth(), contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 16.dp, vertical = 14.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
@@ -151,6 +154,10 @@ fun ChatScreen(project: NexusProject, workspace: Workspace, context: ChatContext
                 error?.let { message -> item { Text(message, color = MaterialTheme.colorScheme.error) } }
             }
             Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp)) {
+                if (queuedMessages.isNotEmpty()) {
+                    QueuePreview(queuedMessages, vm::removeQueuedMessage, vm::clearQueue)
+                    Spacer(Modifier.heightIn(min = 6.dp))
+                }
                 if (input.startsWith("/")) {
                     Row(Modifier.fillMaxWidth().widthIn(max = 820.dp).align(Alignment.CenterHorizontally), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         NEXUS_COMMANDS.filter { it.startsWith(input.substringBefore(' '), ignoreCase = true) }.take(5).forEach { command -> Surface(onClick = { input = "$command " }, shape = RoundedCornerShape(12.dp), color = MaterialTheme.colorScheme.surfaceVariant) { Text(command, Modifier.padding(horizontal = 10.dp, vertical = 7.dp), style = MaterialTheme.typography.labelMedium) } }
@@ -161,8 +168,13 @@ fun ChatScreen(project: NexusProject, workspace: Workspace, context: ChatContext
                     Column(Modifier.padding(horizontal = 7.dp, vertical = 6.dp)) {
                         Row(verticalAlignment = Alignment.Bottom) {
                             IconButton(onClick = { showTools = !showTools }) { Icon(Icons.Outlined.Tune, "Tools") }
-                            OutlinedTextField(value = input, onValueChange = { input = it }, modifier = Modifier.weight(1f).heightIn(min = 46.dp, max = 150.dp), placeholder = { Text("Message Nexus…") }, maxLines = 6, enabled = !generating, shape = RoundedCornerShape(22.dp), colors = androidx.compose.material3.OutlinedTextFieldDefaults.colors(unfocusedContainerColor = MaterialTheme.colorScheme.surface, focusedContainerColor = MaterialTheme.colorScheme.surface, unfocusedBorderColor = MaterialTheme.colorScheme.surface, focusedBorderColor = MaterialTheme.colorScheme.surface))
-                            Surface(onClick = { if (generating) vm.stop() else if (input.isNotBlank()) { vm.send(input, chatContext); input = "" } }, enabled = generating || input.isNotBlank(), shape = CircleShape, color = if (generating) MaterialTheme.colorScheme.surfaceVariant else MaterialTheme.colorScheme.onSurface) { Box(Modifier.padding(10.dp)) { Icon(if (generating) Icons.Outlined.Stop else Icons.Outlined.ArrowUpward, if (generating) "Stop" else "Send", tint = if (generating) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.surface) } }
+                            OutlinedTextField(value = input, onValueChange = { input = it }, modifier = Modifier.weight(1f).heightIn(min = 46.dp, max = 150.dp), placeholder = { Text(if (generating) "Queue a message…" else "Message Nexus…") }, maxLines = 6, enabled = true, shape = RoundedCornerShape(22.dp), colors = androidx.compose.material3.OutlinedTextFieldDefaults.colors(unfocusedContainerColor = MaterialTheme.colorScheme.surface, focusedContainerColor = MaterialTheme.colorScheme.surface, unfocusedBorderColor = MaterialTheme.colorScheme.surface, focusedBorderColor = MaterialTheme.colorScheme.surface))
+                            Surface(onClick = {
+                                if (generating && input.isBlank()) vm.stop()
+                                else if (input.isNotBlank()) { vm.send(input, chatContext); input = "" }
+                            }, enabled = if (generating) input.isNotBlank() || true else input.isNotBlank(), shape = CircleShape, color = if (generating && input.isBlank()) MaterialTheme.colorScheme.surfaceVariant else MaterialTheme.colorScheme.onSurface) {
+                                Box(Modifier.padding(10.dp)) { Icon(if (generating && input.isBlank()) Icons.Outlined.Stop else Icons.Outlined.ArrowUpward, if (generating && input.isBlank()) "Stop" else "Send", tint = if (generating && input.isBlank()) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.surface) }
+                            }
                         }
                         Row(Modifier.fillMaxWidth().padding(start = 4.dp, top = 2.dp), verticalAlignment = Alignment.CenterVertically) {
                             Surface(onClick = { showModelMenu = true }, shape = RoundedCornerShape(12.dp), color = MaterialTheme.colorScheme.surfaceVariant) { Text(featureSettings.model.ifBlank { "Choose model" }, Modifier.padding(horizontal = 11.dp, vertical = 7.dp), style = MaterialTheme.typography.labelMedium, maxLines = 1, overflow = TextOverflow.Ellipsis) }
@@ -178,6 +190,26 @@ fun ChatScreen(project: NexusProject, workspace: Workspace, context: ChatContext
                 Text("Nexus can make mistakes. Check important code changes.", Modifier.fillMaxWidth().widthIn(max = 820.dp).align(Alignment.CenterHorizontally).padding(top = 6.dp), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
+    }
+}
+
+@Composable
+private fun QueuePreview(items: List<QueuedChatMessage>, onRemove: (String) -> Unit, onClear: () -> Unit) {
+    Column(Modifier.fillMaxWidth().widthIn(max = 820.dp).align(Alignment.CenterHorizontally), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("Queued messages · ${items.size}", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f))
+            Text("Clear", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(horizontal = 8.dp).then(Modifier))
+            IconButton(onClick = onClear, modifier = Modifier.size(28.dp)) { Icon(Icons.Outlined.DeleteSweep, "Clear queue") }
+        }
+        items.take(4).forEach { item ->
+            Surface(shape = RoundedCornerShape(14.dp), color = MaterialTheme.colorScheme.surfaceVariant) {
+                Row(Modifier.fillMaxWidth().padding(start = 11.dp, end = 4.dp, top = 7.dp, bottom = 7.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text(item.text, modifier = Modifier.weight(1f), maxLines = 2, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall)
+                    IconButton(onClick = { onRemove(item.id) }, modifier = Modifier.size(30.dp)) { Icon(Icons.Outlined.Close, "Remove queued message") }
+                }
+            }
+        }
+        if (items.size > 4) Text("+${items.size - 4} more queued", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 
@@ -243,19 +275,7 @@ private fun ActionRow(
                 }
             }
             if (execution?.canRollback == true && !rolledBack) {
-                Surface(
-                    onClick = {
-                        if (rollingBack) return@Surface
-                        rollingBack = true
-                        scope.launch {
-                            rolledBack = NexusActionExecutionRegistry.rollback(workspace, proposal.id)
-                            rollingBack = false
-                        }
-                    },
-                    enabled = !rollingBack,
-                    shape = RoundedCornerShape(12.dp),
-                    color = MaterialTheme.colorScheme.surfaceVariant
-                ) {
+                Surface(onClick = { if (rollingBack) return@Surface; rollingBack = true; scope.launch { rolledBack = NexusActionExecutionRegistry.rollback(workspace, proposal.id); rollingBack = false } }, enabled = !rollingBack, shape = RoundedCornerShape(12.dp), color = MaterialTheme.colorScheme.surfaceVariant) {
                     Text(if (rollingBack) "Rolling back…" else "Rollback change", Modifier.padding(horizontal = 11.dp, vertical = 8.dp), style = MaterialTheme.typography.labelMedium)
                 }
             }
