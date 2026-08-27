@@ -32,8 +32,10 @@ data class GitHubIssueComment(
 )
 
 class GitHubIssueService {
-    suspend fun list(repository: String, token: String, state: String = "open", limit: Int = 50): List<GitHubIssue> = withContext(Dispatchers.IO) {
-        val items = apiArray("GET", "/repos/$repository/issues?state=${encode(state)}&per_page=${limit.coerceIn(1, 100)}", token)
+    suspend fun list(repository: String, token: String, state: String = "open", page: Int = 1, limit: Int = 25): List<GitHubIssue> = withContext(Dispatchers.IO) {
+        val safePage = page.coerceAtLeast(1)
+        val safeLimit = limit.coerceIn(1, 100)
+        val items = apiArray("GET", "/repos/$repository/issues?state=${encode(state)}&page=$safePage&per_page=$safeLimit", token)
         (0 until items.length()).mapNotNull { i ->
             val item = items.getJSONObject(i)
             if (item.has("pull_request")) null else parseIssue(item)
@@ -44,8 +46,10 @@ class GitHubIssueService {
         parseIssue(apiJson("GET", "/repos/$repository/issues/$number", token))
     }
 
-    suspend fun comments(repository: String, number: Int, token: String, limit: Int = 100): List<GitHubIssueComment> = withContext(Dispatchers.IO) {
-        val items = apiArray("GET", "/repos/$repository/issues/$number/comments?per_page=${limit.coerceIn(1, 100)}", token)
+    suspend fun comments(repository: String, number: Int, token: String, page: Int = 1, limit: Int = 50): List<GitHubIssueComment> = withContext(Dispatchers.IO) {
+        val safePage = page.coerceAtLeast(1)
+        val safeLimit = limit.coerceIn(1, 100)
+        val items = apiArray("GET", "/repos/$repository/issues/$number/comments?page=$safePage&per_page=$safeLimit", token)
         (0 until items.length()).map { i ->
             val o = items.getJSONObject(i)
             val user = o.optJSONObject("user")
