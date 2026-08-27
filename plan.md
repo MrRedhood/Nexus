@@ -87,4 +87,4 @@
 2. ⬜ Complete provider error/fallback handling and token/context accounting.
 3. ⬜ Finish patch planner and conflict detection for AI workspace edits.
 
-_Last updated: 2026-08-27 — action proposal UI restoration committed; CI verification pending._
+_Last updated: 2026-08-27 — action proposal UI restored; CI verification pending._
