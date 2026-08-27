@@ -55,6 +55,9 @@ data class AgentToolResult(
         action.path?.let { append("Path: ").append(it).append('\n') }
         append("Success: ").append(result.success).append('\n')
         append("Message: ").append(result.message).append('\n')
+        if (action.type == "read_file" && result.success) {
+            append("For a later mutation of this same file, include expectedHash equal to the sha256 reported above. If the hash no longer matches, Nexus will reject the edit as a conflict.\n")
+        }
         result.output?.let {
             append("Output:\n")
             append(it.take(24_000))
