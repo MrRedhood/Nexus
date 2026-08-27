@@ -9,5 +9,6 @@ data class NexusProject(
     val repository: String? = null,
     val branch: String = "main",
     val workspaceId: String? = null,
+    val remoteUrl: String? = null,
     val updatedAt: Long = System.currentTimeMillis()
 )
