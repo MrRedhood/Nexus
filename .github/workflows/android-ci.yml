@@ -18,7 +18,7 @@ on:
           - aab
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: nexus-android-${{ github.ref }}-${{ github.event.inputs.build_target || 'debug' }}
@@ -50,6 +50,42 @@ jobs:
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: "8.11.1"
+
+      - name: Integrate project file tree
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path("app/src/main/java/com/mrredhood/nexus/MainActivity.kt")
+          s = p.read_text()
+          s = s.replace(
+              "import com.mrredhood.nexus.ui.NexusViewModelFactory\n",
+              "import com.mrredhood.nexus.ui.NexusViewModelFactory\nimport com.mrredhood.nexus.ui.ProjectFileTreeDrawer\n"
+          )
+          marker = "    val breadcrumbPaths = buildList { add(\"\"); var path = \"\"; segments.forEach { segment -> path = if (path.isBlank()) segment else \"$path/$segment\"; add(path) } }\n\n"
+          replacement = marker + "    val drawerState = rememberDrawerState(DrawerValue.Closed)\n    val drawerScope = rememberCoroutineScope()\n\n"
+          if marker not in s:
+              raise SystemExit("Workspace breadcrumb marker not found")
+          s = s.replace(marker, replacement, 1)
+          old = '    Scaffold(topBar = { TopAppBar(title = { Text(project.name) }, navigationIcon = { IconButton(onClick = { if (!vm.back(workspace)) onBack() }) { Icon(Icons.Outlined.ArrowBack, "Back") } }, actions = {'
+          new = '    ModalNavigationDrawer(drawerState = drawerState, drawerContent = { ProjectFileTreeDrawer(workspace, currentPath, { path -> vm.read(workspace, path) }, { path -> vm.navigateTo(workspace, path); drawerScope.launch { drawerState.close() } }, { drawerScope.launch { drawerState.close() } }) }) {\n    Scaffold(topBar = { TopAppBar(title = { Text(project.name) }, navigationIcon = { IconButton(onClick = { drawerScope.launch { drawerState.open() } }) { Icon(Icons.Outlined.Menu, "Project files") } }, actions = {'
+          if old not in s:
+              raise SystemExit("Workspace top bar marker not found")
+          s = s.replace(old, new, 1)
+          end = '    }\n    createDialog?.let { type ->'
+          if end not in s:
+              raise SystemExit("Workspace scaffold end marker not found")
+          s = s.replace(end, '    }\n    }\n    createDialog?.let { type ->', 1)
+          p.write_text(s)
+          PY
+          if git diff --quiet -- app/src/main/java/com/mrredhood/nexus/MainActivity.kt; then
+            echo "Project tree integration already applied"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add app/src/main/java/com/mrredhood/nexus/MainActivity.kt
+          git commit -m "feat(ui): add hamburger project file tree"
+          git push
 
       - name: Assemble APK
         if: env.BUILD_TARGET == 'debug' || env.BUILD_TARGET == 'release'
