@@ -50,8 +50,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.unit.dp
+import com.mrredhood.nexus.core.github.GitHubTokenStore
 import com.mrredhood.nexus.core.model.NexusProject
-import com.mrredhood.nexus.core.settings.ApiKeyStore
 import com.mrredhood.nexus.core.workspace.CopilotAgentTask
 import com.mrredhood.nexus.core.workspace.GitHubCopilotAgentService
 import kotlinx.coroutines.delay
@@ -61,7 +61,7 @@ import kotlinx.coroutines.launch
 @Composable
 fun CopilotScreen(project: NexusProject, onBack: () -> Unit) {
     val context = LocalContext.current
-    val tokenStore = remember { ApiKeyStore(context) }
+    val tokenStore = remember { GitHubTokenStore(context) }
     val service = remember { GitHubCopilotAgentService() }
     val scope = rememberCoroutineScope()
     val repository = project.repository.orEmpty()
@@ -78,7 +78,7 @@ fun CopilotScreen(project: NexusProject, onBack: () -> Unit) {
     var error by remember { mutableStateOf<String?>(null) }
     var info by remember { mutableStateOf<String?>(null) }
 
-    fun token(): String? = tokenStore.get("github")
+    fun token(): String? = tokenStore.get()
 
     fun loadTasks() {
         val accessToken = token()
