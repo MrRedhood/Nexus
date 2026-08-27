@@ -3,12 +3,6 @@ package com.mrredhood.nexus.ui
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
-import androidx.compose.animation.core.LinearEasing
-import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -53,7 +47,6 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -128,7 +121,7 @@ fun ChatScreen(project: NexusProject, workspace: Workspace, context: ChatContext
                                     Text("Nexus", style = MaterialTheme.typography.labelMedium)
                                 }
                                 if (generating && index == messages.lastIndex) {
-                                    NexusWorkingIndicator()
+                                    AiActivityIndicator()
                                     if (content.isNotBlank()) Text(content, style = MaterialTheme.typography.bodyLarge)
                                 } else Text(content.ifBlank { "Thinking…" }, style = MaterialTheme.typography.bodyLarge)
                             } else {
@@ -201,18 +194,6 @@ private fun QueuePreview(items: List<QueuedChatMessage>, onRemove: (String) -> U
             }
         }
         if (items.size > 4) Text("+${items.size - 4} more queued", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-    }
-}
-
-@Composable
-private fun NexusWorkingIndicator() {
-    val transition = rememberInfiniteTransition(label = "nexus-working")
-    val rotation by transition.animateFloat(0f, 360f, infiniteRepeatable(tween(900, easing = LinearEasing)), label = "rotation")
-    val pulse by transition.animateFloat(0.55f, 1f, infiniteRepeatable(tween(650), RepeatMode.Reverse), label = "pulse")
-    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(vertical = 4.dp)) {
-        Surface(shape = CircleShape, color = MaterialTheme.colorScheme.primaryContainer) { Text("⚒", Modifier.padding(horizontal = 8.dp, vertical = 6.dp).rotate(rotation), style = MaterialTheme.typography.labelLarge) }
-        Text("Nexus is working…", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary.copy(alpha = pulse))
-        Row(horizontalArrangement = Arrangement.spacedBy(3.dp)) { repeat(3) { i -> Surface(Modifier.size(5.dp), shape = CircleShape, color = MaterialTheme.colorScheme.primary.copy(alpha = if (i == 0) pulse else 0.35f)) {} } }
     }
 }
 
