@@ -7,7 +7,6 @@ import kotlinx.coroutines.withContext
 import org.eclipse.jgit.api.Git
 import org.eclipse.jgit.api.ResetCommand
 import org.eclipse.jgit.transport.SshSessionFactory
-import org.eclipse.jgit.transport.SshdSessionFactory
 import org.eclipse.jgit.transport.UsernamePasswordCredentialsProvider
 import java.io.File
 import java.nio.charset.StandardCharsets
@@ -41,7 +40,7 @@ class GitRemoteService(context: Context) {
         val repoDir = repoDir(projectId); require(File(repoDir, ".git").exists()) { "Connect a repository first." }; val fs = WorkspaceFileSystem(appContext); val files = collectWorkspaceFiles(fs, workspace)
         Git.open(repoDir).use { git ->
             val status = git.status().call(); val paths = (status.added + status.changed + status.removed + status.missing + status.modified + status.untracked + status.conflicting).toSortedSet()
-            paths.map { path -> val afterBytes = files[path].orEmpty(); val after = runCatching { afterBytes.toString(StandardCharsets.UTF_8) }.getOrDefault(""); val added = if (after.isBlank()) 0 else after.lines().size; val removed = if (path in status.missing || path in status.removed) 1 else 0; GitDiff(path, "", after, added, removed) }
+            paths.map { path -> val afterBytes = files[path] ?: ByteArray(0); val after = runCatching { afterBytes.toString(StandardCharsets.UTF_8) }.getOrDefault(""); val added = if (after.isBlank()) 0 else after.lines().size; val removed = if (path in status.missing || path in status.removed) 1 else 0; GitDiff(path, "", after, added, removed) }
         }
     }
 
@@ -51,7 +50,7 @@ class GitRemoteService(context: Context) {
             configure(git); checkoutBranch(git, branch); git.add().addFilepattern(".").call(); git.add().setUpdate(true).addFilepattern(".").call(); val status = git.status().call()
             if (status.isClean) return@use GitRemoteResult(url, branch, "Nothing to commit.")
             val commit = git.commit().setMessage(message.trim()).setAll(true).call(); val push = git.push().setRemote("origin").add(branch); configure(push, url); val pushResult = push.call()
-            if (pushResult.any { it.remoteUpdates.any { update -> update.status.isRejected } }) throw IllegalStateException("Git push was rejected by the remote. Pull first and resolve any divergence.")
+            if (pushResult.any { it.remoteUpdates.any { update -> update.status.name.equals("REJECTED", ignoreCase = true) } }) throw IllegalStateException("Git push was rejected by the remote. Pull first and resolve any divergence.")
             GitRemoteResult(url, branch, "Committed ${commit.name.take(7)} and pushed to $branch.")
         }
     }
@@ -80,7 +79,9 @@ class GitRemoteService(context: Context) {
         val key = credentials.sshPrivateKey()?.trim().orEmpty(); require(key.isNotBlank()) { "SSH remote selected, but no SSH private key is configured in Nexus Git credentials." }
         val sshDir = File(appContext.filesDir, "git-ssh").apply { mkdirs() }; val keyFile = File(sshDir, "id_ed25519"); keyFile.writeText(key, StandardCharsets.UTF_8); keyFile.setReadable(false, false); keyFile.setReadable(true, true); keyFile.setWritable(true, true)
         val knownHosts = File(sshDir, "known_hosts"); knownHosts.writeText(credentials.knownHosts()?.trim().takeUnless { it.isNullOrBlank() } ?: GITHUB_ED25519_HOST_KEY, StandardCharsets.UTF_8)
-        val factory = SshdSessionFactory(); factory.setHomeDirectory(appContext.filesDir); factory.setSshDirectory(sshDir); SshSessionFactory.setInstance(factory)
+        // JGit's Apache SSH transport discovers keys/known_hosts from the configured SSH directory.
+        System.setProperty("user.home", appContext.filesDir.absolutePath)
+        SshSessionFactory.getInstance()
     }
 
     private suspend fun syncRepoToWorkspace(repoDir: File, workspace: Workspace) {
