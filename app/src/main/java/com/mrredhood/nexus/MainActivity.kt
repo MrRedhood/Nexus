@@ -41,7 +41,9 @@ import com.mrredhood.nexus.core.workspace.EntryType
 import com.mrredhood.nexus.core.workspace.Workspace
 import com.mrredhood.nexus.core.workspace.WorkspaceEntry
 import kotlinx.coroutines.launch
+import com.mrredhood.nexus.ui.AiProvidersScreen
 import com.mrredhood.nexus.ui.ChatScreen
+import com.mrredhood.nexus.ui.GitCredentialsScreen
 import com.mrredhood.nexus.ui.GitScreen
 import com.mrredhood.nexus.ui.NexusViewModel
 import com.mrredhood.nexus.ui.NexusViewModelFactory
@@ -72,31 +74,33 @@ private fun NexusApp(vm: NexusViewModel) {
     val settings by settingsVm.settings.collectAsStateWithLifecycle()
     var selectedProjectId by remember { mutableStateOf<String?>(null) }
     var showSettings by remember { mutableStateOf(false) }
+    var showAiProviders by remember { mutableStateOf(false) }
+    var showGitCredentials by remember { mutableStateOf(false) }
     var pickerCallback by remember { mutableStateOf<((Uri?) -> Unit)?>(null) }
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri -> pickerCallback?.invoke(uri); pickerCallback = null }
     fun chooseFolder(callback: (Uri?) -> Unit) { pickerCallback = callback; picker.launch(null) }
     val project = projects.firstOrNull { it.id == selectedProjectId }
     val workspace = project?.let { p -> workspaces.firstOrNull { it.projectId == p.id } }
 
-    if (showSettings) {
-        SettingsScreen(settings, settingsVm::update) { showSettings = false }
-        return
-    }
-
-    Surface(Modifier.fillMaxSize()) {
-        when {
-            project == null -> HomeScreen(projects, vm, ::chooseFolder, { selectedProjectId = it }, { showSettings = true })
-            workspace == null -> MissingWorkspaceScreen(project, vm, ::chooseFolder) { selectedProjectId = null }
-            else -> WorkspaceScreen(project, workspace) { selectedProjectId = null }
+    when {
+        showSettings -> SettingsScreen(settings, settingsVm::update) { showSettings = false }
+        showAiProviders -> AiProvidersScreen { showAiProviders = false }
+        showGitCredentials -> GitCredentialsScreen { showGitCredentials = false }
+        else -> Surface(Modifier.fillMaxSize()) {
+            when {
+                project == null -> HomeScreen(projects, vm, ::chooseFolder, { selectedProjectId = it }, { showSettings = true }, { showAiProviders = true }, { showGitCredentials = true })
+                workspace == null -> MissingWorkspaceScreen(project, vm, ::chooseFolder) { selectedProjectId = null }
+                else -> WorkspaceScreen(project, workspace) { selectedProjectId = null }
+            }
         }
     }
 }
 
 @Composable
-private fun HomeScreen(projects: List<NexusProject>, vm: NexusViewModel, chooseFolder: ((Uri?) -> Unit) -> Unit, onOpen: (String) -> Unit, onSettings: () -> Unit) {
+private fun HomeScreen(projects: List<NexusProject>, vm: NexusViewModel, chooseFolder: ((Uri?) -> Unit) -> Unit, onOpen: (String) -> Unit, onSettings: () -> Unit, onAiProviders: () -> Unit, onGitCredentials: () -> Unit) {
     val context = LocalContext.current
     var create by remember { mutableStateOf(false) }
-    Scaffold(topBar = { TopAppBar(title = { Text("Nexus") }, actions = { IconButton(onClick = onSettings) { Icon(Icons.Outlined.Settings, "Settings") }; IconButton(onClick = { create = true }) { Icon(Icons.Outlined.Add, "Create project") } }) }) { padding ->
+    Scaffold(topBar = { TopAppBar(title = { Text("Nexus") }, actions = { IconButton(onClick = onAiProviders) { Icon(Icons.Outlined.AutoAwesome, "AI model providers") }; IconButton(onClick = onGitCredentials) { Icon(Icons.Outlined.Key, "Git credentials") }; IconButton(onClick = onSettings) { Icon(Icons.Outlined.Settings, "Settings") }; IconButton(onClick = { create = true }) { Icon(Icons.Outlined.Add, "Create project") } }) }) { padding ->
         LazyColumn(Modifier.fillMaxSize().padding(padding).padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             item { Column(Modifier.fillMaxWidth().padding(top = 22.dp, bottom = 8.dp)) { Text("What do you want to build?", style = MaterialTheme.typography.headlineMedium); Text("Open a workspace or create a new project.", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(top = 6.dp)) } }
             item { Text("Projects", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(top = 4.dp)) }
@@ -169,7 +173,6 @@ private fun WorkspaceScreen(project: NexusProject, workspace: Workspace, onBack:
 
     val segments = currentPath.split('/').filter { it.isNotBlank() }
     val breadcrumbPaths = buildList { add(""); var path = ""; segments.forEach { segment -> path = if (path.isBlank()) segment else "$path/$segment"; add(path) } }
-
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     val drawerScope = rememberCoroutineScope()
 
