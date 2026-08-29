@@ -2,9 +2,14 @@ package com.mrredhood.nexus.core.settings
 
 import android.content.Context
 
-/** Encrypted-at-rest credentials used only by native Git transports. */
+/** Encrypted-at-rest credentials used by Git transports and GitHub-backed operations. */
 class GitCredentialStore(context: Context) {
     private val store = ApiKeyStore(context.applicationContext)
+
+    fun setGithubToken(value: String) = store.put("github", value)
+    fun githubToken(): String? = store.get("github")
+    fun hasGithubToken(): Boolean = store.has("github")
+    fun clearGithubToken() = store.remove("github")
 
     fun setHttpsUsername(value: String) = store.put("git-https-username", value)
     fun httpsUsername(): String? = store.get("git-https-username")
