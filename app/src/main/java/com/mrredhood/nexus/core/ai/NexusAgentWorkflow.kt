@@ -16,24 +16,27 @@ class NexusAgentWorkflow(
     val completed: Boolean
         get() = phase == NexusAgentPhase.COMPLETE && status == NexusAgentStatus.SUCCEEDED
 
-    fun startInspection() = move(NexusAgentPhase.INSPECT, NexusAgentStatus.RUNNING)
+    fun startInspection() = start(NexusAgentPhase.INSPECT)
 
     fun finishInspection() {
         requireRunning(NexusAgentPhase.INSPECT)
-        move(if (requiresApproval) NexusAgentPhase.PLAN else NexusAgentPhase.PLAN, NexusAgentStatus.PENDING)
+        phase = NexusAgentPhase.PLAN
+        status = NexusAgentStatus.PENDING
     }
 
-    fun startPlanning() = move(NexusAgentPhase.PLAN, NexusAgentStatus.RUNNING)
+    fun startPlanning() = start(NexusAgentPhase.PLAN)
 
     fun finishPlanning() {
         requireRunning(NexusAgentPhase.PLAN)
-        move(if (requiresApproval) NexusAgentPhase.APPROVAL else NexusAgentPhase.EDIT, NexusAgentStatus.PENDING)
+        phase = if (requiresApproval) NexusAgentPhase.APPROVAL else NexusAgentPhase.EDIT
+        status = NexusAgentStatus.PENDING
     }
 
     fun approve() {
         requirePhase(NexusAgentPhase.APPROVAL)
         require(status == NexusAgentStatus.PENDING)
-        move(NexusAgentPhase.EDIT, NexusAgentStatus.PENDING)
+        phase = NexusAgentPhase.EDIT
+        status = NexusAgentStatus.PENDING
     }
 
     fun reject() {
@@ -41,22 +44,23 @@ class NexusAgentWorkflow(
         status = NexusAgentStatus.BLOCKED
     }
 
-    fun startEdit() = move(NexusAgentPhase.EDIT, NexusAgentStatus.RUNNING)
+    fun startEdit() = start(NexusAgentPhase.EDIT)
 
     fun finishEdit() {
         requireRunning(NexusAgentPhase.EDIT)
-        move(NexusAgentPhase.TEST, NexusAgentStatus.PENDING)
+        phase = NexusAgentPhase.TEST
+        status = NexusAgentStatus.PENDING
     }
 
-    fun startTest() = move(NexusAgentPhase.TEST, NexusAgentStatus.RUNNING)
+    fun startTest() = start(NexusAgentPhase.TEST)
 
     fun finishTest(success: Boolean) = finishExecution(NexusAgentPhase.TEST, success, NexusAgentPhase.BUILD)
 
-    fun startBuild() = move(NexusAgentPhase.BUILD, NexusAgentStatus.RUNNING)
+    fun startBuild() = start(NexusAgentPhase.BUILD)
 
     fun finishBuild(success: Boolean) = finishExecution(NexusAgentPhase.BUILD, success, NexusAgentPhase.VERIFY)
 
-    fun startVerify() = move(NexusAgentPhase.VERIFY, NexusAgentStatus.RUNNING)
+    fun startVerify() = start(NexusAgentPhase.VERIFY)
 
     fun finishVerify(success: Boolean) {
         requireRunning(NexusAgentPhase.VERIFY)
@@ -83,10 +87,12 @@ class NexusAgentWorkflow(
         }
     }
 
-    private fun move(expected: NexusAgentPhase, nextStatus: NexusAgentStatus) {
+    private fun start(expected: NexusAgentPhase) {
         requirePhase(expected)
-        phase = expected
-        status = nextStatus
+        require(status == NexusAgentStatus.PENDING) {
+            "${expected.label} must be pending before it can start."
+        }
+        status = NexusAgentStatus.RUNNING
     }
 
     private fun requireRunning(expected: NexusAgentPhase) {
