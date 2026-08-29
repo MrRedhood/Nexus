@@ -20,7 +20,9 @@ android {
     buildFeatures { compose = true }
     packaging {
         resources.excludes += "/META-INF/{AL2.0,LGPL2.1}"
+        // JGit and Apache SSHD dependencies contain duplicate metadata/resources.
         resources.excludes += "OSGI-INF/l10n/plugin.properties"
+        resources.excludes += "META-INF/DEPENDENCIES"
     }
 }
 
