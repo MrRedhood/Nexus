@@ -14,14 +14,13 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.ArrowBack
+import androidx.compose.material.icons.outlined.CloudUpload
 import androidx.compose.material.icons.outlined.Code
 import androidx.compose.material.icons.outlined.Memory
-import androidx.compose.material.icons.outlined.Security
+import androidx.compose.material.icons.outlined.OpenInNew
 import androidx.compose.material.icons.outlined.SmartToy
 import androidx.compose.material.icons.outlined.Terminal
 import androidx.compose.material.icons.outlined.Tune
-import androidx.compose.material.icons.outlined.CloudUpload
-import androidx.compose.material.icons.outlined.OpenInNew
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.DropdownMenu
@@ -48,9 +47,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
-import com.mrredhood.nexus.core.settings.ApiKeyStore
+import com.mrredhood.nexus.core.settings.GitCredentialStore
 import com.mrredhood.nexus.core.settings.NexusSettings
 import com.mrredhood.nexus.core.workspace.BuildArtifact
 import com.mrredhood.nexus.core.workspace.BuildRun
@@ -62,11 +60,10 @@ import kotlinx.coroutines.launch
 @Composable
 fun SettingsScreen(settings: NexusSettings, onUpdate: ((NexusSettings) -> NexusSettings) -> Unit, onBack: () -> Unit) {
     val context = LocalContext.current
-    val githubTokenStore = remember { ApiKeyStore(context) }
+    val gitCredentials = remember { GitCredentialStore(context) }
     val buildService = remember { GitHubActionsBuildService() }
     val scope = rememberCoroutineScope()
-    var githubToken by remember { mutableStateOf("") }
-    var githubTokenConfigured by remember { mutableStateOf(githubTokenStore.has("github")) }
+    var githubTokenConfigured by remember { mutableStateOf(gitCredentials.hasGithubToken()) }
     var buildRepository by remember { mutableStateOf("") }
     var buildVariant by remember { mutableStateOf("debug") }
     var buildRuns by remember { mutableStateOf<List<BuildRun>>(emptyList()) }
@@ -82,7 +79,7 @@ fun SettingsScreen(settings: NexusSettings, onUpdate: ((NexusSettings) -> NexusS
 
     fun refreshBuilds() {
         val repository = buildRepository.trim()
-        val token = githubTokenStore.get("github")
+        val token = gitCredentials.githubToken()
         if (repository.isBlank() || token.isNullOrBlank()) return
         scope.launch {
             buildError = null
@@ -94,9 +91,9 @@ fun SettingsScreen(settings: NexusSettings, onUpdate: ((NexusSettings) -> NexusS
 
     fun startBuild() {
         val repository = buildRepository.trim()
-        val token = githubTokenStore.get("github")
+        val token = gitCredentials.githubToken()
         if (repository.isBlank()) { buildError = "Enter the GitHub repository as owner/name."; return }
-        if (token.isNullOrBlank()) { buildError = "Configure a GitHub token first."; return }
+        if (token.isNullOrBlank()) { buildError = "Configure a GitHub token in Git credentials first."; return }
         scope.launch {
             building = true
             buildError = null
@@ -140,7 +137,6 @@ fun SettingsScreen(settings: NexusSettings, onUpdate: ((NexusSettings) -> NexusS
                 ChoiceRow("Accent", settings.accent, listOf("blue", "purple", "cyan", "green", "orange", "red")) { v -> onUpdate { it.copy(accent = v) } }
                 ToggleRow("Fullscreen", settings.fullscreen) { v -> onUpdate { it.copy(fullscreen = v) } }
             }
-
             SettingsSection("Editor", Icons.Outlined.Code) {
                 ChoiceRow("Font", settings.editorFont, listOf("JetBrains Mono", "Roboto Mono", "Fira Code", "Source Code Pro", "Ubuntu Mono", "System Mono")) { v -> onUpdate { it.copy(editorFont = v) } }
                 ChoiceRow("Font size", settings.editorFontSize.toString(), (10..24 step 2).map(Int::toString)) { v -> onUpdate { it.copy(editorFontSize = v.toInt()) } }
@@ -151,14 +147,12 @@ fun SettingsScreen(settings: NexusSettings, onUpdate: ((NexusSettings) -> NexusS
                 ToggleRow("Auto-close brackets", settings.autoCloseBrackets) { v -> onUpdate { it.copy(autoCloseBrackets = v) } }
                 ToggleRow("Auto-close tags", settings.autoCloseTags) { v -> onUpdate { it.copy(autoCloseTags = v) } }
             }
-
             SettingsSection("Workspace", Icons.Outlined.Memory) {
                 ChoiceRow("Indexing", settings.indexing, listOf("automatic", "on_open", "manual", "disabled")) { v -> onUpdate { it.copy(indexing = v) } }
                 ChoiceRow("Workspace context", settings.workspaceContext, listOf("never", "smart", "always")) { v -> onUpdate { it.copy(workspaceContext = v) } }
                 ToggleRow("Diagnostics", settings.diagnostics) { v -> onUpdate { it.copy(diagnostics = v) } }
                 ToggleRow("Format on save", settings.formatOnSave) { v -> onUpdate { it.copy(formatOnSave = v) } }
             }
-
             SettingsSection("AI", Icons.Outlined.SmartToy) {
                 ChoiceRow("AI permission", permissionMode, listOf("never", "some", "autonomous")) { v -> onUpdate { it.copy(workspacePermission = v) } }
                 ToggleRow("Streaming", settings.aiStreaming) { v -> onUpdate { it.copy(aiStreaming = v) } }
@@ -167,54 +161,18 @@ fun SettingsScreen(settings: NexusSettings, onUpdate: ((NexusSettings) -> NexusS
                 ToggleRow("Include Git diff", settings.includeGitDiff) { v -> onUpdate { it.copy(includeGitDiff = v) } }
                 ToggleRow("Include workspace summary", settings.includeWorkspaceSummary) { v -> onUpdate { it.copy(includeWorkspaceSummary = v) } }
             }
-
             SettingsSection("Terminal", Icons.Outlined.Terminal) {
                 ChoiceRow("Font size", settings.terminalFontSize.toString(), listOf("11", "13", "15", "17")) { v -> onUpdate { it.copy(terminalFontSize = v.toInt()) } }
                 ChoiceRow("Scrollback", settings.terminalScrollback.toString(), listOf("1000", "5000", "10000", "20000")) { v -> onUpdate { it.copy(terminalScrollback = v.toInt()) } }
             }
-
-            SettingsSection("GitHub", Icons.Outlined.Security) {
-                Text("GitHub token", style = MaterialTheme.typography.titleMedium)
-                Text(
-                    if (githubTokenConfigured) "A token is securely stored on this device. Enter a new token only if you want to replace it."
-                    else "Store a GitHub personal access token to fetch, commit, push and sync repositories from Nexus.",
-                    style = MaterialTheme.typography.bodySmall
-                )
-                OutlinedTextField(
-                    value = githubToken,
-                    onValueChange = { githubToken = it },
-                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
-                    label = { Text(if (githubTokenConfigured) "Replace GitHub token" else "GitHub token") },
-                    placeholder = { Text("github_pat_…") },
-                    singleLine = true,
-                    visualTransformation = PasswordVisualTransformation()
-                )
-                Row(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    FilledTonalButton(enabled = githubToken.isNotBlank(), onClick = {
-                        githubTokenStore.put("github", githubToken.trim())
-                        githubToken = ""
-                        githubTokenConfigured = true
-                    }) { Text(if (githubTokenConfigured) "Replace token" else "Save token") }
-                    if (githubTokenConfigured) TextButton(onClick = { githubTokenStore.remove("github"); githubToken = ""; githubTokenConfigured = false }) { Text("Remove token") }
-                }
-                Text("Nexus encrypts the token with Android Keystore and never puts it in project files.", style = MaterialTheme.typography.labelSmall)
-            }
-
             SettingsSection("GitHub Actions / CI") {
                 ToggleRow("Analyze CI failures automatically", settings.autoAnalyzeCiFailures) { v -> onUpdate { it.copy(autoAnalyzeCiFailures = v) } }
                 ChoiceRow("Refresh interval", "${settings.ciRefreshSeconds}s", listOf("5s", "10s", "30s", "60s")) { v -> onUpdate { it.copy(ciRefreshSeconds = v.removeSuffix("s").toInt()) } }
+                Text("GitHub authentication is managed in the separate Git credentials screen.", style = MaterialTheme.typography.bodySmall)
             }
-
             SettingsSection("Cloud Build", Icons.Outlined.CloudUpload) {
                 Text("Build Android APKs on GitHub Actions without installing SDKs in Nexus.", style = MaterialTheme.typography.bodySmall)
-                OutlinedTextField(
-                    value = buildRepository,
-                    onValueChange = { buildRepository = it },
-                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
-                    label = { Text("Repository") },
-                    placeholder = { Text("owner/name") },
-                    singleLine = true
-                )
+                OutlinedTextField(value = buildRepository, onValueChange = { buildRepository = it }, modifier = Modifier.fillMaxWidth().padding(top = 8.dp), label = { Text("Repository") }, placeholder = { Text("owner/name") }, singleLine = true)
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Box(Modifier.weight(1f)) {
                         OutlinedButton(onClick = { expandedBuildVariant = true }, modifier = Modifier.fillMaxWidth()) { Text("${buildVariant.replaceFirstChar { it.uppercase() }} APK") }
@@ -223,43 +181,30 @@ fun SettingsScreen(settings: NexusSettings, onUpdate: ((NexusSettings) -> NexusS
                         }
                     }
                     FilledTonalButton(enabled = !building && githubTokenConfigured && buildRepository.isNotBlank(), onClick = ::startBuild) {
-                        Icon(Icons.Outlined.CloudUpload, null)
-                        Spacer(Modifier.padding(2.dp))
-                        Text(if (building) "Building…" else "Build")
+                        Icon(Icons.Outlined.CloudUpload, null); Spacer(Modifier.padding(2.dp)); Text(if (building) "Building…" else "Build")
                     }
                 }
                 if (building) Text("GitHub Actions is running. Nexus will keep polling the run and will not cancel it.", style = MaterialTheme.typography.labelMedium)
                 buildError?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
-
                 buildRuns.take(5).forEach { run ->
                     Card(shape = MaterialTheme.shapes.large, colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)) {
                         Column(Modifier.fillMaxWidth().padding(14.dp)) {
-                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                Text(run.statusLabel(), style = MaterialTheme.typography.titleSmall)
-                                Text(run.commitSha.take(7), style = MaterialTheme.typography.labelMedium)
-                            }
+                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) { Text(run.statusLabel(), style = MaterialTheme.typography.titleSmall); Text(run.commitSha.take(7), style = MaterialTheme.typography.labelMedium) }
                             Text("${run.branch} · ${run.createdAt.replace('T', ' ').substringBefore('.')}", style = MaterialTheme.typography.bodySmall)
-                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                                TextButton(onClick = { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(run.url))) }) { Icon(Icons.Outlined.OpenInNew, null); Spacer(Modifier.padding(2.dp)); Text("Open run") }
-                            }
+                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) { TextButton(onClick = { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(run.url))) }) { Icon(Icons.Outlined.OpenInNew, null); Spacer(Modifier.padding(2.dp)); Text("Open run") } }
                         }
                     }
                 }
-
                 selectedArtifacts.forEach { artifact ->
                     Card(shape = MaterialTheme.shapes.large) {
                         Row(Modifier.fillMaxWidth().padding(14.dp), horizontalArrangement = Arrangement.SpaceBetween) {
-                            Column(Modifier.weight(1f)) {
-                                Text(artifact.name, style = MaterialTheme.typography.titleSmall)
-                                Text(formatBytes(artifact.sizeBytes), style = MaterialTheme.typography.bodySmall)
-                            }
+                            Column(Modifier.weight(1f)) { Text(artifact.name, style = MaterialTheme.typography.titleSmall); Text(formatBytes(artifact.sizeBytes), style = MaterialTheme.typography.bodySmall) }
                             TextButton(onClick = { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(buildRuns.firstOrNull()?.url ?: "https://github.com"))) }) { Text("Open") }
                         }
                     }
                 }
-                if (buildRuns.isEmpty() && !building) Text("Enter a repository and configure a token to see build history.", style = MaterialTheme.typography.labelSmall)
+                if (buildRuns.isEmpty() && !building) Text("Enter a repository and configure a GitHub token in Git credentials to see build history.", style = MaterialTheme.typography.labelSmall)
             }
-
             Spacer(Modifier.padding(bottom = 12.dp))
         }
     }
@@ -282,28 +227,17 @@ private fun formatBytes(bytes: Long): String = when {
 
 @Composable
 fun SettingsSection(title: String, icon: ImageVector? = null, content: @Composable () -> Unit) {
-    Card(
-        Modifier.fillMaxWidth(),
-        shape = MaterialTheme.shapes.extraLarge,
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)
-    ) {
+    Card(Modifier.fillMaxWidth(), shape = MaterialTheme.shapes.extraLarge, colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                if (icon != null) Icon(icon, null)
-                Text(title, style = MaterialTheme.typography.titleLarge)
-            }
-            Spacer(Modifier.padding(2.dp))
-            content()
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) { if (icon != null) Icon(icon, null); Text(title, style = MaterialTheme.typography.titleLarge) }
+            Spacer(Modifier.padding(2.dp)); content()
         }
     }
 }
 
 @Composable
 fun ToggleRow(title: String, checked: Boolean, onChange: (Boolean) -> Unit) {
-    Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), horizontalArrangement = Arrangement.SpaceBetween) {
-        Text(title, modifier = Modifier.weight(1f))
-        Switch(checked = checked, onCheckedChange = onChange)
-    }
+    Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), horizontalArrangement = Arrangement.SpaceBetween) { Text(title, modifier = Modifier.weight(1f)); Switch(checked = checked, onCheckedChange = onChange) }
 }
 
 @Composable
@@ -313,9 +247,7 @@ fun ChoiceRow(title: String, selected: String, options: List<String>, onSelect: 
         Text(title, modifier = Modifier.weight(1f).padding(top = 14.dp))
         Box(modifier = Modifier.weight(1f)) {
             OutlinedButton(onClick = { expanded = true }, modifier = Modifier.fillMaxWidth()) { Text(selected.replace('_', ' ')) }
-            DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-                options.forEach { option -> DropdownMenuItem(text = { Text(option.replace('_', ' ')) }, onClick = { expanded = false; onSelect(option) }) }
-            }
+            DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) { options.forEach { option -> DropdownMenuItem(text = { Text(option.replace('_', ' ')) }, onClick = { expanded = false; onSelect(option) }) } }
         }
     }
 }
