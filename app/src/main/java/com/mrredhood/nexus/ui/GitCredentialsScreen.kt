@@ -1,3 +1,5 @@
+@file:OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+
 package com.mrredhood.nexus.ui
 
 import androidx.compose.foundation.layout.Arrangement
@@ -12,6 +14,7 @@ import androidx.compose.material.icons.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.Key
 import androidx.compose.material.icons.outlined.Security
 import androidx.compose.material3.Card
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -35,6 +38,8 @@ import com.mrredhood.nexus.core.settings.GitCredentialStore
 fun GitCredentialsScreen(onBack: () -> Unit) {
     val context = androidx.compose.ui.platform.LocalContext.current
     val store = remember { GitCredentialStore(context) }
+    var githubToken by remember { mutableStateOf("") }
+    var githubConfigured by remember { mutableStateOf(store.hasGithubToken()) }
     var httpsUsername by remember { mutableStateOf(store.httpsUsername().orEmpty()) }
     var httpsPassword by remember { mutableStateOf(store.httpsPassword().orEmpty()) }
     var sshKey by remember { mutableStateOf(store.sshPrivateKey().orEmpty()) }
@@ -49,9 +54,22 @@ fun GitCredentialsScreen(onBack: () -> Unit) {
             item {
                 Card(Modifier.fillMaxWidth()) {
                     Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
-                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) { Icon(Icons.Outlined.Security, null); Text("Native Git authentication", style = MaterialTheme.typography.titleLarge) }
-                        Text("HTTPS and SSH credentials are stored separately from GitHub API tokens and AI-provider keys. They are encrypted at rest.", style = MaterialTheme.typography.bodyMedium)
+                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) { Icon(Icons.Outlined.Security, null); Text("Git authentication", style = MaterialTheme.typography.titleLarge) }
+                        Text("GitHub API token, HTTPS credentials and SSH credentials are managed here and encrypted at rest.", style = MaterialTheme.typography.bodyMedium)
                         message?.let { Text(it, color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelMedium) }
+                    }
+                }
+            }
+            item {
+                Card(Modifier.fillMaxWidth()) {
+                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) { Icon(Icons.Outlined.Key, null); Text("GitHub API", style = MaterialTheme.typography.titleMedium) }
+                        Text("Used by Nexus for repository access, GitHub synchronization and GitHub Actions builds. This token is no longer part of Settings.", style = MaterialTheme.typography.bodySmall)
+                        OutlinedTextField(githubToken, { githubToken = it }, label = { Text(if (githubConfigured) "Replace GitHub token" else "GitHub token") }, placeholder = { Text("github_pat_…") }, singleLine = true, modifier = Modifier.fillMaxWidth(), visualTransformation = PasswordVisualTransformation())
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            FilledTonalButton(enabled = githubToken.isNotBlank(), onClick = { store.setGithubToken(githubToken.trim()); githubToken = ""; githubConfigured = true; message = "GitHub token saved securely." }) { Text(if (githubConfigured) "Replace token" else "Save token") }
+                            if (githubConfigured) TextButton(onClick = { store.clearGithubToken(); githubToken = ""; githubConfigured = false; message = "GitHub token removed." }) { Text("Remove") }
+                        }
                     }
                 }
             }
