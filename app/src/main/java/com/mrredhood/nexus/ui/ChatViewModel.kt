@@ -82,19 +82,10 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
     fun open(workspace: Workspace) {
         if (this.workspaceId == workspace.id) { this.workspace = workspace; return }
-        stop()
-        messageQueue.clear()
-        publishQueue()
-        workspaceId = workspace.id
-        this.workspace = workspace
+        stop(); messageQueue.clear(); publishQueue(); workspaceId = workspace.id; this.workspace = workspace
         _messages.value = repository.load(workspace.id)
         _actionProposals.value = NexusActionProtocol.extract(_messages.value.lastOrNull { it.role == "assistant" }?.content.orEmpty())
-        _actionReviews.value = emptyMap()
-        _error.value = null
-        _actionMessage.value = null
-        _engineeringWorkflow.value = null
-        _tokenUsage.value = TokenUsage()
-        _contextSnapshot.value = null
+        _actionReviews.value = emptyMap(); _error.value = null; _actionMessage.value = null; _engineeringWorkflow.value = null; _tokenUsage.value = TokenUsage(); _contextSnapshot.value = null
         previewMutatingActions(_actionProposals.value, workspace)
     }
 
@@ -109,18 +100,10 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             workspaceSummary = context.workspaceSummary?.let { contextItem(AIContextSource.WORKSPACE_SUMMARY, "Workspace summary", it) }
         )
         val automaticMode = when (settings.workspaceContext.lowercase()) { "never", "off", "disabled" -> AutomaticContextMode.NEVER; "always" -> AutomaticContextMode.ALWAYS; else -> AutomaticContextMode.SMART }
-        _contextSnapshot.value = contextService.assemble(request, AIContextOptions(
-            automaticContext = automaticMode,
-            maxRelatedFiles = settings.maxContextFiles.coerceIn(0, 50),
-            includeCurrentFile = settings.includeCurrentFile,
-            includeSelection = settings.includeSelection,
-            includeGitDiff = settings.includeGitDiff,
-            includeTerminalOutput = settings.includeTerminalContext,
-            includeWorkspaceSummary = settings.includeWorkspaceSummary
-        ))
+        _contextSnapshot.value = contextService.assemble(request, AIContextOptions(automaticContext = automaticMode, maxRelatedFiles = settings.maxContextFiles.coerceIn(0, 50), includeCurrentFile = settings.includeCurrentFile, includeSelection = settings.includeSelection, includeGitDiff = settings.includeGitDiff, includeTerminalOutput = settings.includeTerminalContext, includeWorkspaceSummary = settings.includeWorkspaceSummary))
     }
 
-    private fun contextItem(source: AIContextSource, label: String, content: String) = AIContextItem(source, label, content, AIContextService.estimateTokens(content))
+    private fun contextItem(source: AIContextSource, label: String, content: String) = AIContextItem(source = source, label = label, content = content, estimatedTokens = AIContextService.estimateTokens(content))
 
     private fun previewMutatingActions(proposals: List<NexusActionProposal>, targetWorkspace: Workspace) = viewModelScope.launch {
         val reviews = mutableMapOf<String, NexusActionReview>()
@@ -128,29 +111,12 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         _actionReviews.value = reviews
     }
 
-    fun editAndResend(index: Int, editedText: String, context: ChatContext = ChatContext()) {
-        if (_generating.value) return
-        val text = editedText.trim(); val target = _messages.value.getOrNull(index) ?: return
-        if (text.isEmpty() || target.role != "user") return
-        _messages.value = _messages.value.take(index); workspaceId?.let { repository.save(it, _messages.value) }; send(text, context)
-    }
-
-    fun regenerate(index: Int, context: ChatContext = ChatContext()) {
-        if (_generating.value) return
-        val current = _messages.value; val target = current.getOrNull(index) ?: return
-        if (target.role != "assistant") return
-        val userIndex = current.subList(0, index).indexOfLast { it.role == "user" }; if (userIndex < 0) return
-        val prompt = current[userIndex].content.trim(); if (prompt.isEmpty()) return
-        _messages.value = current.take(userIndex); workspaceId?.let { repository.save(it, _messages.value) }; send(prompt, context)
-    }
+    fun editAndResend(index: Int, editedText: String, context: ChatContext = ChatContext()) { if (_generating.value) return; val text = editedText.trim(); val target = _messages.value.getOrNull(index) ?: return; if (text.isEmpty() || target.role != "user") return; _messages.value = _messages.value.take(index); workspaceId?.let { repository.save(it, _messages.value) }; send(text, context) }
+    fun regenerate(index: Int, context: ChatContext = ChatContext()) { if (_generating.value) return; val current = _messages.value; val target = current.getOrNull(index) ?: return; if (target.role != "assistant") return; val userIndex = current.subList(0, index).indexOfLast { it.role == "user" }; if (userIndex < 0) return; val prompt = current[userIndex].content.trim(); if (prompt.isEmpty()) return; _messages.value = current.take(userIndex); workspaceId?.let { repository.save(it, _messages.value) }; send(prompt, context) }
 
     fun send(text: String, context: ChatContext = ChatContext()) {
         val rawPrompt = text.trim(); if (rawPrompt.isEmpty() || workspaceId == null) return
-        if (_generating.value) {
-            if (messageQueue.offer(QueuedChatMessage(text = rawPrompt, context = context))) publishQueue()
-            else _error.value = "Message queue is full (20 messages). Wait for Nexus to finish or stop the current response."
-            return
-        }
+        if (_generating.value) { if (messageQueue.offer(QueuedChatMessage(text = rawPrompt, context = context))) publishQueue() else _error.value = "Message queue is full (20 messages). Wait for Nexus to finish or stop the current response."; return }
         processMessage(QueuedChatMessage(text = rawPrompt, context = context))
     }
 
@@ -158,8 +124,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         val id = workspaceId ?: return
         generationJob = viewModelScope.launch {
             _error.value = null; _actionMessage.value = null; _actionProposals.value = emptyList(); _actionReviews.value = emptyMap(); _engineeringWorkflow.value = null
-            val rawPrompt = message.text; val prompt = normalizeCommand(rawPrompt)
-            inspectContext(prompt, message.context)
+            val rawPrompt = message.text; val prompt = normalizeCommand(rawPrompt); inspectContext(prompt, message.context)
             val settings = NexusSettingsRuntime.current(); val history = _messages.value + ChatMessage("user", rawPrompt)
             _messages.value = history + ChatMessage("assistant", ""); _generating.value = true
             try {
@@ -167,21 +132,11 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                     val targetWorkspace = workspace ?: error("Open a workspace before starting an engineering task.")
                     val project = projectFor(targetWorkspace)
                     updateAssistant(history.size, "Starting engineering workflow…")
-                    val task = workflowRunner.run(
-                        request = prompt,
-                        project = project,
-                        workspace = targetWorkspace,
-                        permissionMode = settings.aiToolPermission,
-                        actionProvider = { taskRequest, taskWorkspace -> generateEngineeringActions(taskRequest, taskWorkspace, message.context) },
-                        onUpdate = ::publishEngineeringUpdate
-                    )
-                    val resultText = task.result?.takeIf { it.isNotBlank() } ?: task.error?.takeIf { it.isNotBlank() } ?: "Engineering workflow finished."
+                    val task = workflowRunner.run(request = prompt, project = project, workspace = targetWorkspace, permissionMode = settings.workspacePermission, actionProvider = { taskRequest, taskWorkspace -> generateEngineeringActions(taskRequest, taskWorkspace, message.context) }, onUpdate = ::publishEngineeringUpdate)
+                    val resultText = task.lastResult?.takeIf { it.isNotBlank() } ?: task.error?.takeIf { it.isNotBlank() } ?: "Engineering workflow finished."
                     updateAssistant(history.size, resultText)
-                    val current = _messages.value.toMutableList(); current[history.size] = current[history.size].copy(content = resultText); _messages.value = current
-                    repository.save(id, current)
-                } else {
-                    runChatRequest(id, history, prompt, message.context, settings)
-                }
+                    val current = _messages.value.toMutableList(); current[history.size] = current[history.size].copy(content = resultText); _messages.value = current; repository.save(id, current)
+                } else runChatRequest(id, history, prompt, message.context, settings)
             } catch (cancelled: CancellationException) { repository.save(id, _messages.value.filterIndexed { index, _ -> index <= history.size }); throw cancelled }
             catch (error: Throwable) { _messages.value = history; _error.value = error.message ?: "AI request failed."; repository.save(id, history) }
             finally { _generating.value = false; generationJob = null; processNextQueuedMessage() }
@@ -190,75 +145,43 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
     private suspend fun runChatRequest(id: String, history: List<ChatMessage>, prompt: String, context: ChatContext, settings: com.mrredhood.nexus.core.settings.NexusSettings) {
         val snapshot = _contextSnapshot.value; val system = contextBuilder.build(context, snapshot) + "\n\n" + WORKSPACE_TOOL_INSTRUCTIONS
-        val assistantIndex = history.size; val providerMessages = history.takeLast(40).map { AiMessage(it.role, it.content) }.toMutableList()
-        var finalText = ""; var finalResponse: com.mrredhood.nexus.core.ai.AiResponse? = null; var round = 0; var shouldContinue = true
+        val assistantIndex = history.size; val providerMessages = history.takeLast(40).map { AiMessage(it.role, it.content) }.toMutableList(); var finalText = ""; var finalResponse: com.mrredhood.nexus.core.ai.AiResponse? = null; var round = 0; var shouldContinue = true
         while (shouldContinue && agentLoop.canContinue(round)) {
             val request = AiRequest(messages = buildList { add(AiMessage("system", system)); addAll(providerMessages) }, model = "", stream = settings.aiStreaming && round == 0)
             val result = if (settings.aiStreaming && round == 0) provider.stream(request) { delta -> finalText += delta; updateAssistant(assistantIndex, finalText) } else provider.complete(request)
             if (!result.success) error(result.message.ifBlank { "AI request failed." })
             finalResponse = result.response; finalText = result.response?.text ?: result.message; updateAssistant(assistantIndex, NexusActionProtocol.stripProtocol(finalText))
-            val proposals = NexusActionProtocol.extract(finalText); _actionProposals.value = proposals
-            val activeWorkspace = workspace
+            val proposals = NexusActionProtocol.extract(finalText); _actionProposals.value = proposals; val activeWorkspace = workspace
             if (activeWorkspace == null || proposals.isEmpty()) shouldContinue = false else {
                 val toolResults = agentLoop.collectReadOnlyResults(activeWorkspace, proposals); val mutating = proposals.filter { NexusActionPolicy.requiresApproval(it.action) }
-                if (mutating.isNotEmpty()) { previewMutatingActions(mutating, activeWorkspace); shouldContinue = false }
-                else if (toolResults.isEmpty()) shouldContinue = false else { providerMessages += AiMessage("assistant", finalText); toolResults.forEach { providerMessages += AiMessage("user", it.asPromptMessage()) }; round++; updateAssistant(assistantIndex, "Inspecting workspace…") }
+                if (mutating.isNotEmpty()) { previewMutatingActions(mutating, activeWorkspace); shouldContinue = false } else if (toolResults.isEmpty()) shouldContinue = false else { providerMessages += AiMessage("assistant", finalText); toolResults.forEach { providerMessages += AiMessage("user", it.asPromptMessage()) }; round++; updateAssistant(assistantIndex, "Inspecting workspace…") }
             }
         }
-        val current = _messages.value.toMutableList(); if (assistantIndex < current.size) current[assistantIndex] = current[assistantIndex].copy(content = NexusActionProtocol.stripProtocol(finalText)); _messages.value = current
-        repository.save(id, current); _tokenUsage.value = TokenUsage(finalResponse?.inputTokens ?: estimateTokens(system + providerMessages.joinToString { it.content }), finalResponse?.outputTokens ?: estimateTokens(finalText))
+        val current = _messages.value.toMutableList(); if (assistantIndex < current.size) current[assistantIndex] = current[assistantIndex].copy(content = NexusActionProtocol.stripProtocol(finalText)); _messages.value = current; repository.save(id, current)
+        _tokenUsage.value = TokenUsage(finalResponse?.inputTokens ?: estimateTokens(system + providerMessages.joinToString { it.content }), finalResponse?.outputTokens ?: estimateTokens(finalText))
     }
 
     private suspend fun generateEngineeringActions(request: String, targetWorkspace: Workspace, context: ChatContext): List<NexusActionProposal> {
         val system = contextBuilder.build(context, _contextSnapshot.value) + "\n\n" + WORKSPACE_TOOL_INSTRUCTIONS + "\nFor this engineering workflow, emit only the concrete workspace edit actions required after inspection."
         val result = provider.complete(AiRequest(messages = listOf(AiMessage("system", system), AiMessage("user", request)), model = "", stream = false))
-        if (!result.success) error(result.message.ifBlank { "Unable to generate engineering actions." })
-        return NexusActionProtocol.extract(result.response?.text ?: result.message)
+        if (!result.success) error(result.message.ifBlank { "Unable to generate engineering actions." }); return NexusActionProtocol.extract(result.response?.text ?: result.message)
     }
 
-    private suspend fun projectFor(targetWorkspace: Workspace): NexusProject = projectRepository.projects.first().firstOrNull { it.id == targetWorkspace.projectId }
-        ?: error("No Nexus project is linked to this workspace.")
-
-    private fun publishEngineeringUpdate(update: EngineeringWorkflowUpdate) {
-        _engineeringWorkflow.value = EngineeringWorkflowState(update.task.request, update.phase, update.status, update.task.stage, update.task.result, update.task.error)
-    }
-
-    private fun shouldUseEngineeringWorkflow(prompt: String): Boolean {
-        val command = prompt.substringBefore(' ').lowercase()
-        if (command in ENGINEERING_COMMANDS) return true
-        val text = prompt.lowercase()
-        return listOf("fix ", "implement ", "refactor ", "build ", "create ", "modify ", "change code", "run tests").any { text.contains(it) }
-    }
-
+    private suspend fun projectFor(targetWorkspace: Workspace): NexusProject = projectRepository.projects.first().firstOrNull { it.id == targetWorkspace.projectId } ?: error("No Nexus project is linked to this workspace.")
+    private fun publishEngineeringUpdate(update: EngineeringWorkflowUpdate) { _engineeringWorkflow.value = EngineeringWorkflowState(update.task.request, update.phase, update.status, update.task.stage.name, update.task.lastResult, update.task.error) }
+    private fun shouldUseEngineeringWorkflow(prompt: String): Boolean { val command = prompt.substringBefore(' ').lowercase(); if (command in ENGINEERING_COMMANDS) return true; val text = prompt.lowercase(); return listOf("fix ", "implement ", "refactor ", "build ", "create ", "modify ", "change code", "run tests").any { text.contains(it) } }
     private fun processNextQueuedMessage() { val next = messageQueue.poll() ?: run { publishQueue(); return }; publishQueue(); processMessage(next) }
     fun removeQueuedMessage(id: String) { if (messageQueue.remove(id)) publishQueue() }
     fun clearQueue() { messageQueue.clear(); publishQueue() }
     private fun publishQueue() { _queue.value = messageQueue.snapshot() }
     private fun updateAssistant(index: Int, content: String) { val current = _messages.value.toMutableList(); if (index < current.size && current[index].role == "assistant") { current[index] = current[index].copy(content = content); _messages.value = current } }
-
-    private fun normalizeCommand(input: String): String {
-        val command = input.substringBefore(' ').lowercase(); val body = input.substringAfter(' ', "").trim()
-        val instruction = when (command) {
-            "/explain" -> "Explain the relevant code clearly and point to the files involved."
-            "/fix" -> "Diagnose and fix the problem. Inspect relevant files before proposing changes."
-            "/refactor" -> "Refactor the relevant code without changing intended behavior."
-            "/optimize" -> "Optimize the relevant code while preserving behavior and correctness."
-            "/test" -> "Inspect the code and create or improve appropriate tests."
-            "/build" -> "Inspect the project build configuration and determine the correct build workflow."
-            "/search" -> "Search the workspace for the requested symbol, file, or implementation."
-            "/open" -> "Open the requested workspace file in the editor."
-            else -> return input
-        }
-        return if (body.isBlank()) instruction else "$instruction\nUser request: $body"
-    }
-
+    private fun normalizeCommand(input: String): String { val command = input.substringBefore(' ').lowercase(); val body = input.substringAfter(' ', "").trim(); val instruction = when (command) { "/explain" -> "Explain the relevant code clearly and point to the files involved."; "/fix" -> "Diagnose and fix the problem. Inspect relevant files before proposing changes."; "/refactor" -> "Refactor the relevant code without changing intended behavior."; "/optimize" -> "Optimize the relevant code while preserving behavior and correctness."; "/test" -> "Inspect the code and create or improve appropriate tests."; "/build" -> "Inspect the project build configuration and determine the correct build workflow."; "/search" -> "Search the workspace for the requested symbol, file, or implementation."; "/open" -> "Open the requested workspace file in the editor."; else -> return input }; return if (body.isBlank()) instruction else "$instruction\nUser request: $body" }
     fun stop() { generationJob?.cancel(); generationJob = null; _generating.value = false }
     fun clear() { stop(); messageQueue.clear(); publishQueue(); workspaceId?.let(repository::clear); _messages.value = emptyList(); _actionProposals.value = emptyList(); _actionReviews.value = emptyMap(); _actionMessage.value = null; _engineeringWorkflow.value = null; _error.value = null; _tokenUsage.value = TokenUsage(); _contextSnapshot.value = null }
     fun clearError() { _error.value = null }
     fun rejectAction(id: String) { _actionProposals.value = _actionProposals.value.map { if (it.id == id) it.copy(status = NexusActionStatus.REJECTED) else it } }
     fun openAction(id: String) { val target = _actionProposals.value.firstOrNull { it.id == id } ?: return; val path = target.action.path ?: return; if (target.action.type == "open_file" || target.action.type == "focus_file") workspace?.let { NexusEditorActionBus.request(it.id, path, target.action.type == "focus_file") } }
     fun approveAction(id: String) { val target = _actionProposals.value.firstOrNull { it.id == id } ?: return; if (target.status in setOf(NexusActionStatus.REJECTED, NexusActionStatus.COMPLETED, NexusActionStatus.EXECUTING)) return; val targetWorkspace = workspace ?: run { _actionMessage.value = "Open a workspace before applying this action."; return }; viewModelScope.launch { if (NexusActionPolicy.requiresApproval(target.action)) { val review = runCatching { actionExecutor.preview(targetWorkspace, target) }.getOrElse { _actionMessage.value = it.message ?: "Unable to prepare action review."; return@launch }; if (review != null) { _actionReviews.value = _actionReviews.value + (id to review); if (!review.changed) { _actionProposals.value = _actionProposals.value.map { if (it.id == id) it.copy(status = NexusActionStatus.COMPLETED) else it }; _actionMessage.value = "No changes to apply for ${review.path}."; return@launch } } }; _actionProposals.value = _actionProposals.value.map { if (it.id == id) it.copy(status = NexusActionStatus.EXECUTING) else it }; val result = actionExecutor.execute(targetWorkspace, target.action); _actionProposals.value = _actionProposals.value.map { if (it.id == id) it.copy(status = if (result.success) NexusActionStatus.COMPLETED else NexusActionStatus.FAILED) else it }; _actionMessage.value = result.output?.takeIf { it.isNotBlank() } ?: result.message; if (result.success && (target.action.type == "open_file" || target.action.type == "focus_file")) openAction(id); if (result.success && target.action.type in MUTATING_ACTIONS) runCatching { workspaceContextService.refresh(targetWorkspace) } } }
-
     private fun estimateTokens(text: String): Int = (text.length + 3) / 4
     override fun onCleared() { generationJob?.cancel(); super.onCleared() }
     companion object {
