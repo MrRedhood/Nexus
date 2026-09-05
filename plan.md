@@ -31,8 +31,8 @@
 - 🔄 Pause/cancel AI response
 - 🔄 AI workspace file operations
 - ✅ AI permission enforcement: Never / Some / Autonomous
-- ⬜ Full inspect → plan → approve → edit → test → build → verify loop
-- ⬜ Autonomous engineering workflows
+- 🔄 Full inspect → plan → approve → edit → test → build → verify loop
+- 🔄 Autonomous engineering workflows
 
 ## Hard constraints
 
@@ -80,13 +80,19 @@
 - ✅ Focused AI provider settings: Gemini, OpenRouter, DeepInfra, LiteLLM
 - ✅ Lazy pagination for GitHub issues and comments
 - ✅ AI action payload parsing hardening and JVM test-runtime compatibility
-- ✅ GitHub token moved from Settings into dedicated Git credentials screen
+- ✅ Dedicated AI Providers screen with provider/model/key management
+- ✅ Floating AI workspace entry point
+- ✅ Dedicated Git credentials screen with HTTPS, GitHub token and SSH credential management
+- ✅ GitHub token removed from general Settings
+- ✅ Deterministic `NexusAgentWorkflow` state machine
+- ✅ Engineering workflow lifecycle tests covering autonomous, approval and failure paths
 - 🔄 GitHub repository discovery and Actions build/artifact foundation
 
 ## Next priority
 
-1. ⬜ Complete task/coding/debug agents: inspect → plan → approve → edit → test → build → verify.
+1. ⬜ Complete the end-to-end AI execution path: provider/model selection → request routing → workspace AI chat → engineering workflow execution.
 2. ⬜ Complete provider error/fallback handling and token/context accounting.
 3. ⬜ Finish patch planner and conflict detection for AI workspace edits.
+4. ⬜ Complete the end-to-end Git credential path: credential selection → clone/pull/push → GitHub Actions integration.
 
-_Last updated: 2026-08-29 — Recorded successful Nexus Android CI run 409 (run 33226037365) after moving GitHub authentication into the dedicated Git credentials screen._
+_Last updated: 2026-09-05 — Recorded successful Nexus Android CI run 413 after correcting engineering workflow state transitions._
