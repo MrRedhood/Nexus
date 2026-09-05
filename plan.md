@@ -86,13 +86,14 @@
 - ✅ GitHub token removed from general Settings
 - ✅ Deterministic `NexusAgentWorkflow` state machine
 - ✅ Engineering workflow lifecycle tests covering autonomous, approval and failure paths
+- ✅ Engineering workflow runner bridging workspace inspection, AI actions, validation, GitHub Actions build and verification stages
 - 🔄 GitHub repository discovery and Actions build/artifact foundation
 
 ## Next priority
 
-1. ⬜ Complete the end-to-end AI execution path: provider/model selection → request routing → workspace AI chat → engineering workflow execution.
+1. ⬜ Connect Workspace AI chat and AI actions to `NexusEngineeringWorkflowRunner` so engineering tasks actually enter the lifecycle from the user-facing AI surface.
 2. ⬜ Complete provider error/fallback handling and token/context accounting.
 3. ⬜ Finish patch planner and conflict detection for AI workspace edits.
 4. ⬜ Complete the end-to-end Git credential path: credential selection → clone/pull/push → GitHub Actions integration.
 
-_Last updated: 2026-09-05 — Recorded successful Nexus Android CI run 413 after correcting engineering workflow state transitions._
+_Last updated: 2026-09-05 — Recorded successful Nexus Android CI run 416 for the engineering workflow runner._
