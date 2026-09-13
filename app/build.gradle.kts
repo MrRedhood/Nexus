@@ -1,0 +1,47 @@
+plugins {
+    id("com.android.application")
+    id("org.jetbrains.kotlin.android")
+    id("org.jetbrains.kotlin.plugin.compose")
+}
+
+android {
+    namespace = "com.mrredhood.nexus"
+    compileSdk = 35
+
+    defaultConfig {
+        applicationId = "com.mrredhood.nexus"
+        minSdk = 26
+        targetSdk = 35
+        versionCode = 1
+        versionName = "0.1.0-alpha01"
+    }
+
+    buildFeatures {
+        compose = true
+        buildConfig = true
+    }
+
+    packaging {
+        resources.excludes += "/META-INF/{AL2.0,LGPL2.1}"
+    }
+}
+
+dependencies {
+    implementation(project(":core:domain"))
+    implementation(project(":core:policy"))
+    implementation(project(":core:workspace"))
+    implementation(project(":core:agent"))
+    implementation(project(":core:build"))
+
+    implementation("androidx.core:core-ktx:1.17.0")
+    implementation("androidx.activity:activity-compose:1.10.1")
+    implementation("androidx.lifecycle:lifecycle-runtime-compose:2.9.2")
+    implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.9.2")
+    implementation("androidx.compose.ui:ui:1.9.0")
+    implementation("androidx.compose.ui:ui-tooling-preview:1.9.0")
+    implementation("androidx.compose.material3:material3:1.3.2")
+    debugImplementation("androidx.compose.ui:ui-tooling:1.9.0")
+    debugImplementation("androidx.compose.ui:ui-test-manifest:1.9.0")
+    testImplementation("junit:junit:4.13.2")
+    androidTestImplementation("androidx.compose.ui:ui-test-junit4:1.9.0")
+}
